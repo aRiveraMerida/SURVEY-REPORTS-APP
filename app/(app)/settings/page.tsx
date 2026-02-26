@@ -1,0 +1,443 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import type { EmitterSettings } from '@/types/database';
+
+export default function SettingsPage() {
+  const [settings, setSettings] = useState<EmitterSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Form fields
+  const [companyName, setCompanyName] = useState('');
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [phones, setPhones] = useState<string[]>([]);
+  const [emails, setEmails] = useState<string[]>([]);
+  const [web, setWeb] = useState('');
+  const [linkedin, setLinkedin] = useState('');
+  const [addresses, setAddresses] = useState('');
+
+  // API key
+  const [apiKey, setApiKey] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [verifyingKey, setVerifyingKey] = useState(false);
+  const [keyStatus, setKeyStatus] = useState<'valid' | 'invalid' | null>(null);
+
+  // Tag inputs
+  const [newPhone, setNewPhone] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+
+  const supabase = createClient();
+
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('emitter_settings')
+      .select('*')
+      .limit(1)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      alert('Error al cargar configuración: ' + error.message);
+    }
+
+    if (data) {
+      setSettings(data);
+      setCompanyName(data.company_name || '');
+      setLogoPreview(data.logo_url);
+      setPhones(data.footer_phones || []);
+      setEmails(data.footer_emails || []);
+      setWeb(data.footer_web || '');
+      setLinkedin(data.footer_linkedin || '');
+      setAddresses((data.footer_addresses || []).join('\n'));
+    }
+
+    // Load API key from localStorage
+    const savedKey = localStorage.getItem('claude_api_key');
+    if (savedKey) setApiKey(savedKey);
+
+    setLoading(false);
+  }, [supabase]);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
+
+  const handleSaveSettings = async () => {
+    setSaving(true);
+    setMessage(null);
+
+    let logoUrl = settings?.logo_url || null;
+
+    if (logoFile) {
+      const ext = logoFile.name.split('.').pop();
+      const fileName = `emitter/${Date.now()}.${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from('logos')
+        .upload(fileName, logoFile, { upsert: true });
+
+      if (!uploadError) {
+        const { data } = supabase.storage.from('logos').getPublicUrl(fileName);
+        logoUrl = data.publicUrl;
+      }
+    }
+
+    const updates = {
+      company_name: companyName,
+      logo_url: logoUrl,
+      footer_phones: phones,
+      footer_emails: emails,
+      footer_web: web || null,
+      footer_linkedin: linkedin || null,
+      footer_addresses: addresses.split('\n').filter(Boolean),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (settings?.id) {
+      const { error } = await supabase
+        .from('emitter_settings')
+        .update(updates)
+        .eq('id', settings.id);
+
+      if (error) {
+        setMessage({ type: 'error', text: 'Error al guardar: ' + error.message });
+      } else {
+        setMessage({ type: 'success', text: 'Guardado correctamente' });
+      }
+    }
+
+    setSaving(false);
+  };
+
+  const handleSaveApiKey = () => {
+    if (apiKey.trim()) {
+      localStorage.setItem('claude_api_key', apiKey.trim());
+    } else {
+      localStorage.removeItem('claude_api_key');
+    }
+    setMessage({ type: 'success', text: 'API key guardada localmente' });
+  };
+
+  const handleVerifyKey = async () => {
+    if (!apiKey.trim()) return;
+    setVerifyingKey(true);
+    setKeyStatus(null);
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey.trim(),
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 10,
+          messages: [{ role: 'user', content: 'Hi' }],
+        }),
+      });
+
+      setKeyStatus(response.ok ? 'valid' : 'invalid');
+    } catch {
+      setKeyStatus('invalid');
+    }
+
+    setVerifyingKey(false);
+  };
+
+  const handleExport = async () => {
+    const { data: clients } = await supabase.from('clients').select('*');
+    const { data: reports } = await supabase.from('reports').select('*');
+    const { data: emitter } = await supabase.from('emitter_settings').select('*');
+
+    const backup = {
+      exportedAt: new Date().toISOString(),
+      emitter_settings: emitter,
+      clients,
+      reports,
+    };
+
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `survey-reports-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const addPhone = () => {
+    if (newPhone.trim()) {
+      setPhones([...phones, newPhone.trim()]);
+      setNewPhone('');
+    }
+  };
+
+  const addEmail = () => {
+    if (newEmail.trim()) {
+      setEmails([...emails, newEmail.trim()]);
+      setNewEmail('');
+    }
+  };
+
+  if (loading) {
+    return <div className="text-center py-12 text-gray-400">Cargando configuración...</div>;
+  }
+
+  return (
+    <div className="max-w-2xl">
+      <h1 className="text-2xl font-bold text-gray-900 mb-8">Settings</h1>
+
+      {message && (
+        <div
+          className={`mb-6 p-3 rounded-lg text-sm ${
+            message.type === 'success'
+              ? 'bg-green-50 text-green-700 border border-green-200'
+              : 'bg-red-50 text-red-700 border border-red-200'
+          }`}
+        >
+          {message.text}
+        </div>
+      )}
+
+      {/* Section 1: Emitter Settings */}
+      <section className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Empresa emisora</h2>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nombre de la empresa</label>
+            <input
+              type="text"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-corp focus:border-transparent outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Logo</label>
+            <div className="flex items-center gap-4">
+              {logoPreview ? (
+                <img src={logoPreview} alt="Logo" className="w-16 h-16 object-contain rounded-lg border border-gray-200" />
+              ) : (
+                <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center text-gray-300 text-sm">Logo</div>
+              )}
+              <label className="cursor-pointer px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
+                {logoPreview ? 'Cambiar' : 'Subir logo'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) { setLogoFile(file); setLogoPreview(URL.createObjectURL(file)); }
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* Phones */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Teléfonos</label>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {phones.map((phone, i) => (
+                <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-sm">
+                  {phone}
+                  <button onClick={() => setPhones(phones.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500">×</button>
+                </span>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addPhone())}
+                placeholder="973 22 87 05 (LLEIDA)"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              />
+              <button onClick={addPhone} className="px-3 py-2 text-sm bg-gray-100 rounded-lg hover:bg-gray-200">Añadir</button>
+            </div>
+          </div>
+
+          {/* Emails */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Emails</label>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {emails.map((email, i) => (
+                <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-sm">
+                  {email}
+                  <button onClick={() => setEmails(emails.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500">×</button>
+                </span>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addEmail())}
+                placeholder="movimer@movimer.com"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              />
+              <button onClick={addEmail} className="px-3 py-2 text-sm bg-gray-100 rounded-lg hover:bg-gray-200">Añadir</button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Web</label>
+            <input
+              type="text"
+              value={web}
+              onChange={(e) => setWeb(e.target.value)}
+              placeholder="www.movimer.com"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">LinkedIn</label>
+            <input
+              type="text"
+              value={linkedin}
+              onChange={(e) => setLinkedin(e.target.value)}
+              placeholder="LinkedIn: Movimer World"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Direcciones</label>
+            <textarea
+              value={addresses}
+              onChange={(e) => setAddresses(e.target.value)}
+              rows={3}
+              placeholder="Una dirección por línea"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm resize-none"
+            />
+          </div>
+
+          <button
+            onClick={handleSaveSettings}
+            disabled={saving}
+            className="px-4 py-2 text-sm font-medium bg-corp text-white rounded-lg hover:bg-corp-dark disabled:opacity-50 transition-colors"
+          >
+            {saving ? 'Guardando...' : 'Guardar configuración'}
+          </button>
+        </div>
+      </section>
+
+      {/* Section 2: Claude API Key */}
+      <section className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">API key de Claude</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Tu clave de API de Anthropic (Claude). <strong>Es obligatoria</strong> para que la IA analice los datos y genere informes.
+        </p>
+
+        <div className="space-y-3">
+          <div className="relative">
+            <input
+              type={showApiKey ? 'text' : 'password'}
+              value={apiKey}
+              onChange={(e) => { setApiKey(e.target.value); setKeyStatus(null); }}
+              placeholder="sk-ant-..."
+              className="w-full px-3 py-2 pr-20 border border-gray-300 rounded-lg text-sm font-mono"
+            />
+            <button
+              onClick={() => setShowApiKey(!showApiKey)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600"
+            >
+              {showApiKey ? 'Ocultar' : 'Mostrar'}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleVerifyKey}
+              disabled={!apiKey.trim() || verifyingKey}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+            >
+              {verifyingKey ? 'Verificando...' : 'Verificar clave'}
+            </button>
+            <button
+              onClick={handleSaveApiKey}
+              className="px-3 py-1.5 text-sm bg-corp text-white rounded-lg hover:bg-corp-dark"
+            >
+              Guardar
+            </button>
+
+            {keyStatus === 'valid' && (
+              <span className="text-sm text-green-600">Clave válida</span>
+            )}
+            {keyStatus === 'invalid' && (
+              <span className="text-sm text-red-600">Clave inválida o sin saldo</span>
+            )}
+          </div>
+
+          <p className="text-xs text-gray-400">
+            La clave se guarda solo en tu navegador (localStorage). No se sube al servidor.
+          </p>
+        </div>
+      </section>
+
+      {/* Section 3: Backup */}
+      <section className="bg-white rounded-lg border border-gray-200 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Backup</h2>
+
+        <div className="space-y-3">
+          <button
+            onClick={handleExport}
+            className="w-full px-4 py-2.5 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-left"
+          >
+            Exportar todos los datos
+            <span className="block text-xs text-gray-400 mt-0.5">
+              Descarga un JSON con clientes e informes
+            </span>
+          </button>
+
+          <label className="block w-full px-4 py-2.5 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer text-left">
+            Importar datos
+            <span className="block text-xs text-gray-400 mt-0.5">
+              Restaurar desde un backup JSON
+            </span>
+            <input
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                try {
+                  const text = await file.text();
+                  const backup = JSON.parse(text);
+
+                  if (backup.clients) {
+                    for (const client of backup.clients) {
+                      await supabase.from('clients').upsert(client);
+                    }
+                  }
+                  if (backup.reports) {
+                    for (const report of backup.reports) {
+                      await supabase.from('reports').upsert(report);
+                    }
+                  }
+
+                  setMessage({ type: 'success', text: 'Datos importados correctamente' });
+                } catch {
+                  setMessage({ type: 'error', text: 'Error al importar. Verifica el formato del archivo.' });
+                }
+              }}
+            />
+          </label>
+        </div>
+      </section>
+    </div>
+  );
+}
