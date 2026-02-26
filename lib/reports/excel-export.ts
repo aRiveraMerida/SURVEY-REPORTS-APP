@@ -110,7 +110,8 @@ export function exportToExcel(
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   }
 
-  // Trigger download
-  const fileName = `${title} - ${period}.xlsx`;
-  XLSX.writeFile(wb, fileName);
+  // Trigger download — sanitize file name for OS compatibility
+  const safeTitle = title.replace(/[:\\/?*\[\]<>|"]/g, '').trim() || 'Informe';
+  const safePeriod = period.replace(/[:\\/?*\[\]<>|"]/g, '').trim() || 'Periodo';
+  XLSX.writeFile(wb, `${safeTitle} - ${safePeriod}.xlsx`);
 }
