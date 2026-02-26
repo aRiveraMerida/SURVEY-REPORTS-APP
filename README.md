@@ -1,36 +1,273 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Survey Reports App
 
-## Getting Started
+Aplicacion web para generar informes profesionales a partir de datos de encuestas y campanas. Utiliza **inteligencia artificial (Claude de Anthropic)** para analizar automaticamente los datos cargados (Excel/CSV), detectar las preguntas relevantes y proponer la estructura del informe. El usuario puede personalizar las preguntas, tipos de grafico y filtros antes de generar el informe final en HTML.
 
-First, run the development server:
+## Caracteristicas principales
+
+- **Analisis adaptativo con IA**: Claude analiza estadisticas de columnas para identificar el tipo de datos, detectar preguntas de encuesta, proponer embudos de clasificacion y sugerir tipos de grafico adecuados.
+- **Tres tipos de informe**: graficos de barras/pastel (`charts`), tablas resumen (`table`) y diagramas de flujo (`flowchart`).
+- **Portadas profesionales**: cada informe incluye portada con logotipos, periodo, barra decorativa y esquema de color corporativo (#53860F).
+- **Filtrado por pregunta**: cada pregunta puede tener un `filterColumn`/`filterValues` para segmentar los datos antes de calcular resultados.
+- **Autenticacion con Supabase**: Magic Link (sin contrasena). RLS habilitado en todas las tablas.
+- **Gestion de clientes y emisor**: configuracion de empresa emisora (logo, contacto) y clientes (logo, nombre) almacenados en Supabase.
+- **Exportacion**: el informe generado se puede descargar como archivo HTML independiente listo para imprimir o convertir a PDF.
+
+## Stack tecnologico
+
+- **Framework**: [Next.js 16](https://nextjs.org/) con App Router y Turbopack
+- **Lenguaje**: TypeScript
+- **UI**: Tailwind CSS v4 con tema corporativo (verde `#53860F`)
+- **Tipografia**: Inter (Google Fonts)
+- **IA**: Anthropic Claude (`@anthropic-ai/sdk`)
+- **Base de datos / Auth**: [Supabase](https://supabase.com/) (`@supabase/supabase-js`, `@supabase/ssr`)
+- **Graficos**: Chart.js + react-chartjs-2
+- **Parsing de datos**: PapaParse (CSV) + SheetJS/xlsx (Excel)
+- **Drag & Drop**: dnd-kit (reordenacion de preguntas)
+- **Hosting**: Vercel
+
+## Estructura del proyecto
+
+```
+survey-reports-app/
+├── app/
+│   ├── layout.tsx                  # Layout raiz (fuente Inter, metadata)
+│   ├── login/page.tsx              # Pagina de login (Magic Link)
+│   ├── auth/callback/route.ts      # Callback de Supabase Auth
+│   ├── api/analyze/route.ts        # API Route que invoca Claude
+│   └── (app)/                      # Grupo de rutas autenticadas
+│       ├── layout.tsx              # Layout con Navbar
+│       ├── page.tsx                # Dashboard principal
+│       ├── clients/[id]/page.tsx   # Detalle/edicion de cliente
+│       ├── reports/new/page.tsx    # Asistente de creacion de informe (3 pasos)
+│       ├── reports/[id]/page.tsx   # Vista previa del informe generado
+│       └── settings/page.tsx       # Configuracion del emisor y API Key
+├── components/
+│   └── ui/Navbar.tsx               # Barra de navegacion
+├── lib/
+│   ├── ai/prompts.ts               # Prompt del sistema para Claude
+│   ├── db/
+│   │   ├── clients.ts              # CRUD de clientes en Supabase
+│   │   ├── emitter.ts              # CRUD de configuracion del emisor
+│   │   └── reports.ts              # CRUD de informes en Supabase
+│   ├── processing/
+│   │   ├── parser.ts               # Parseo de archivos Excel/CSV
+│   │   ├── stats.ts                # buildColumnStats() — estadisticas por columna
+│   │   ├── processor.ts            # Generacion de datos del informe
+│   │   └── resolver.ts             # Resolucion de URLs de logo
+│   ├── reports/
+│   │   ├── charts-html.ts          # Plantilla HTML para informes de graficos
+│   │   ├── table-html.ts           # Plantilla HTML para informes de tabla
+│   │   ├── flowchart-html.ts       # Plantilla HTML para informes de flujo
+│   │   └── chart-renderer.ts       # Renderizado de graficos con Chart.js
+│   ├── supabase/
+│   │   ├── client.ts               # Cliente Supabase para el navegador
+│   │   ├── server.ts               # Cliente Supabase para Server Components
+│   │   └── middleware.ts           # Helper de Supabase para middleware
+│   └── utils/formatting.ts         # Utilidades de formato (numeros, colores)
+├── types/
+│   └── database.ts                 # Tipos TypeScript (AIAnalysis, AIQuestionConfig, etc.)
+├── middleware.ts                    # Middleware de Next.js (proteccion de rutas)
+├── supabase/
+│   └── migrations/
+│       ├── 001_initial.sql         # Esquema inicial (emitter_settings, clients, reports, RLS)
+│       └── 002_simplify_for_ai.sql # Simplificacion: elimina client_configs, ai_analysis en reports
+└── package.json
+```
+
+## Requisitos previos
+
+- **Node.js** >= 18.x
+- **npm** (incluido con Node.js)
+- Cuenta en **Supabase** (plan gratuito suficiente)
+- API Key de **Anthropic** (Claude) — se configura desde la UI, no requiere variable de entorno
+
+## Instalacion y configuracion local
+
+### 1. Clonar el repositorio
+
+```bash
+git clone git@github.com:aRiveraMerida/SURVEY-REPORTS-APP.git
+cd SURVEY-REPORTS-APP
+```
+
+### 2. Instalar dependencias
+
+```bash
+npm install
+```
+
+### 3. Crear proyecto en Supabase
+
+1. Ve a [app.supabase.com](https://app.supabase.com) y crea un nuevo proyecto.
+2. Una vez creado, ve a **Settings > API** y copia:
+   - `Project URL` (ej: `https://xxxx.supabase.co`)
+   - `anon public` key
+
+### 4. Ejecutar migraciones en Supabase
+
+Ve al **SQL Editor** de tu proyecto en Supabase y ejecuta los siguientes archivos **en orden**:
+
+1. `supabase/migrations/001_initial.sql` — Crea las tablas `emitter_settings`, `clients`, `reports`, habilita RLS, crea el bucket de logos y las politicas de acceso.
+2. `supabase/migrations/002_simplify_for_ai.sql` — Anade columnas `report_type` y `ai_analysis` a `reports`, elimina la tabla `client_configs`.
+
+### 5. Configurar variables de entorno
+
+Crea un archivo `.env.local` en la raiz del proyecto:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://tu-proyecto.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=tu-anon-key-publica
+```
+
+> **Nota**: La API Key de Anthropic/Claude **no** se configura aqui. Se almacena en `localStorage` del navegador y se configura desde la pagina de **Ajustes** dentro de la aplicacion.
+
+### 6. Configurar Auth en Supabase
+
+Para que el Magic Link funcione correctamente en desarrollo:
+
+1. En Supabase, ve a **Authentication > URL Configuration**.
+2. Configura:
+   - **Site URL**: `http://localhost:3000`
+   - **Redirect URLs**: `http://localhost:3000/**`
+
+### 7. Iniciar el servidor de desarrollo
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+La aplicacion estara disponible en `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Despliegue en Vercel
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 1. Conectar repositorio
 
-## Learn More
+1. Ve a [vercel.com](https://vercel.com) y crea un nuevo proyecto conectado al repositorio de GitHub.
+2. Vercel detectara automaticamente que es un proyecto Next.js.
 
-To learn more about Next.js, take a look at the following resources:
+### 2. Variables de entorno en Vercel
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+En **Settings > Environment Variables**, anade las siguientes variables para **los tres entornos** (Production, Preview, Development):
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `NEXT_PUBLIC_SUPABASE_URL` = `https://tu-proyecto.supabase.co`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` = `tu-anon-key-publica`
 
-## Deploy on Vercel
+> **Importante**: asegurate de que las variables esten configuradas para los tres entornos. Si solo se configuran para Production, las previews y los builds de desarrollo fallaran con un error "No API key found".
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 3. Configurar Auth para produccion
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Una vez desplegado, actualiza las URLs en Supabase (**Authentication > URL Configuration**):
+
+- **Site URL**: `https://tu-dominio.vercel.app`
+- **Redirect URLs**: `https://tu-dominio.vercel.app/**`
+
+Si necesitas que funcione tanto en local como en produccion, anade ambas URLs a la lista de Redirect URLs.
+
+### 4. Desplegar
+
+```bash
+git push origin main
+```
+
+Vercel desplegara automaticamente al detectar cambios en `main`.
+
+## Uso de la aplicacion
+
+### Primer acceso
+
+1. Abre la aplicacion y accede con tu email via **Magic Link**.
+2. Revisa tu bandeja de entrada y haz clic en el enlace recibido.
+
+### Configuracion inicial (Ajustes)
+
+1. Ve a **Ajustes** desde la barra de navegacion.
+2. Configura los datos del **Emisor**: nombre de empresa, logo, telefonos, emails, web, LinkedIn y direcciones. Estos datos aparecen en el pie de pagina de los informes.
+3. Introduce tu **API Key de Claude** (Anthropic). Se almacena solo en tu navegador (`localStorage`).
+
+### Crear un cliente
+
+1. Desde el **Dashboard**, haz clic en **Nuevo Cliente**.
+2. Rellena el nombre del cliente y opcionalmente sube un logo.
+3. El logo se almacena en el bucket `logos` de Supabase Storage.
+
+### Generar un informe
+
+El asistente de creacion consta de **3 pasos**:
+
+#### Paso 1 — Datos basicos
+
+- Selecciona el **cliente**.
+- Indica el **titulo** y **periodo** del informe.
+- Sube el archivo de datos (**Excel .xlsx/.xls** o **CSV**).
+- La aplicacion parsea el archivo, calcula estadisticas por columna (`buildColumnStats`) y las envia a Claude via la API `/api/analyze`.
+
+#### Paso 2 — Configuracion del analisis (IA)
+
+Claude devuelve un analisis con:
+
+- **Tipo de datos** detectado (ej: "encuesta de satisfaccion", "datos de contacto").
+- **Columna de clasificacion / embudo** (opcional, solo si aplica).
+- **Preguntas detectadas** con: texto, tipo de grafico sugerido, columna fuente, filtros opcionales y justificacion (`rationale`).
+
+En este paso puedes:
+
+- **Activar/desactivar preguntas** individualmente o en bloque (Todas / Ninguna).
+- **Editar el texto** de cada pregunta en linea.
+- **Cambiar el tipo de grafico** (barras, pastel, tabla, flujo).
+- **Seleccionar el tipo de informe** global: Graficos, Tabla o Diagrama de Flujo.
+
+#### Paso 3 — Generacion
+
+- Haz clic en **Generar Informe**.
+- El procesador (`processor.ts`) recorre las preguntas activas, aplica filtros por pregunta si existen, calcula frecuencias y genera los datos.
+- La plantilla HTML correspondiente genera el informe final con portada, graficos/tablas y pie de pagina.
+- El informe se guarda en Supabase y se muestra en pantalla.
+- Desde la vista del informe puedes **descargarlo como HTML**.
+
+## Scripts disponibles
+
+```bash
+npm run dev       # Servidor de desarrollo con Turbopack
+npm run build     # Build de produccion
+npm run start     # Servidor de produccion (tras build)
+npm run lint      # Linting con ESLint
+```
+
+## Base de datos — Esquema
+
+### emitter_settings
+
+Configuracion de la empresa emisora de informes. Solo existe una fila.
+
+- `company_name`, `logo_url`, `footer_phones[]`, `footer_emails[]`, `footer_web`, `footer_linkedin`, `footer_addresses[]`
+
+### clients
+
+Empresas para las que se generan informes.
+
+- `name`, `logo_url`, `notes`, `created_by` (referencia a `auth.users`)
+
+### reports
+
+Informes generados.
+
+- `client_id`, `title`, `period`, `report_type` (charts/table/flowchart), `report_html` (HTML completo), `report_data` (JSON con datos procesados), `ai_analysis` (JSON con analisis de Claude), `created_by`
+
+### Row Level Security
+
+Todas las tablas tienen RLS habilitado. Las politicas permiten acceso completo a cualquier usuario autenticado (modelo de equipo compartido).
+
+### Storage
+
+Bucket `logos` publico para almacenar logotipos de clientes y del emisor.
+
+## Seguridad
+
+- La **API Key de Claude** se almacena exclusivamente en `localStorage` del navegador del usuario. Nunca se envia al servidor de la aplicacion ni se persiste en base de datos.
+- Las llamadas a la API de Claude se realizan desde una **API Route de Next.js** (`/api/analyze`), que recibe la API Key en el header de la peticion.
+- **Supabase Auth** protege todas las rutas bajo `(app)/` mediante middleware de Next.js.
+- El **anon key** de Supabase es publica por diseno (la seguridad recae en RLS).
+
+## Licencia
+
+Proyecto privado. Todos los derechos reservados.
