@@ -2,6 +2,29 @@ import * as XLSX from 'xlsx';
 import type { ProcessedData } from '@/types/database';
 
 /**
+ * Sanitize a string for use as an Excel sheet name.
+ * Removes forbidden characters: : \ / ? * [ ]
+ * Truncates to 31 chars (Excel limit) and ensures uniqueness.
+ */
+function sanitizeSheetName(name: string, existing: string[]): string {
+  let clean = name.replace(/[:\\/?*\[\]]/g, '').trim();
+  if (!clean) clean = 'Hoja';
+  clean = clean.length > 31 ? clean.slice(0, 28) + '...' : clean;
+
+  // Ensure uniqueness
+  let final = clean;
+  let counter = 2;
+  while (existing.includes(final)) {
+    const suffix = ` (${counter})`;
+    final = clean.length + suffix.length > 31
+      ? clean.slice(0, 31 - suffix.length) + suffix
+      : clean + suffix;
+    counter++;
+  }
+  return final;
+}
+
+/**
  * Export processed report data to an Excel (.xlsx) file and trigger download.
  */
 export function exportToExcel(
@@ -67,6 +90,7 @@ export function exportToExcel(
   XLSX.utils.book_append_sheet(wb, questionsSheet, 'Datos');
 
   // Individual sheets per question
+  const usedNames = ['Resumen', 'Datos'];
   for (const q of data.questions) {
     const rows = Object.entries(q.frequencies)
       .sort((a, b) => b[1] - a[1])
@@ -81,10 +105,8 @@ export function exportToExcel(
     const ws = XLSX.utils.json_to_sheet(rows);
     ws['!cols'] = [{ wch: 30 }, { wch: 12 }, { wch: 12 }];
 
-    // Truncate sheet name to 31 chars (Excel limit)
-    const sheetName = q.questionText.length > 28
-      ? q.questionText.slice(0, 28) + '...'
-      : q.questionText;
+    const sheetName = sanitizeSheetName(q.questionText, usedNames);
+    usedNames.push(sheetName);
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   }
 
