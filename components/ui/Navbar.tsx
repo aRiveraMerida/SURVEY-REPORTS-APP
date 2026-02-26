@@ -26,6 +26,7 @@ export default function Navbar() {
 
   const navLinks = [
     { href: '/', label: 'Inicio' },
+    { href: '/access-logs', label: 'Logs' },
     { href: '/settings', label: 'Settings' },
   ];
 

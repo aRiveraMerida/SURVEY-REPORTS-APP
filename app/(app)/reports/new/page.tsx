@@ -11,7 +11,9 @@ import { renderChartToBase64, imageUrlToBase64 } from '@/lib/reports/chart-rende
 import { generateChartsHTML } from '@/lib/reports/charts-html';
 import { generateTableHTML } from '@/lib/reports/table-html';
 import { generateFlowchartHTML } from '@/lib/reports/flowchart-html';
+import { exportToExcel } from '@/lib/reports/excel-export';
 import { DEFAULT_STYLE } from '@/lib/ai/prompts';
+import { logAction } from '@/lib/db/access-logs';
 import type { Client, AIAnalysis, AIQuestionConfig, ProcessedData, EmitterSettings } from '@/types/database';
 
 type Step = 1 | 2 | 3;
@@ -109,6 +111,7 @@ function NewReportContent() {
       } else {
         setAnalysis(result.analysis);
         if (result.usage) setApiCost(result.usage);
+        logAction(supabase, 'data_analyzed', '/reports/new');
         setStep(2);
       }
     } catch (err) {
@@ -219,6 +222,7 @@ function NewReportContent() {
     if (error) {
       alert('Error al guardar: ' + error.message);
     } else {
+      logAction(supabase, 'report_created', '/reports/new');
       router.push(`/clients/${selectedClientId}`);
     }
     setSaving(false);
@@ -235,6 +239,13 @@ function NewReportContent() {
     const a = document.createElement('a');
     a.href = url; a.download = `${title} - ${period}.html`; a.click();
     URL.revokeObjectURL(url);
+    logAction(supabase, 'report_exported_html', '/reports/new');
+  };
+
+  const handleExportExcel = () => {
+    if (!processedData) return;
+    exportToExcel(processedData, title, period);
+    logAction(supabase, 'report_exported_excel', '/reports/new');
   };
 
   const stepLabels = ['Datos', 'Análisis IA', 'Informe'];
@@ -497,9 +508,13 @@ function NewReportContent() {
               className="px-4 py-2 text-sm font-medium bg-gray-800 text-white rounded-lg hover:bg-gray-900">
               PDF
             </button>
+            <button onClick={handleExportExcel}
+              className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50">
+              Excel
+            </button>
             <button onClick={handleDownload}
               className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50">
-              Descargar HTML
+              HTML
             </button>
             <button onClick={handleSave} disabled={saving}
               className="px-6 py-2 text-sm font-medium bg-corp text-white rounded-lg hover:bg-corp-dark disabled:opacity-50">

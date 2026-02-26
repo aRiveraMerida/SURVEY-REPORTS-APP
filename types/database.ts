@@ -102,6 +102,20 @@ export interface AIFlowchartNode {
 }
 
 // ============================================
+// Access Log
+// ============================================
+export interface AccessLog {
+  id: string;
+  user_id: string;
+  user_email: string;
+  action: string;
+  path: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+}
+
+// ============================================
 // Report Style
 // ============================================
 export interface ReportStyle {

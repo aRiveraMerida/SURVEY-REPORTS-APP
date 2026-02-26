@@ -10,6 +10,18 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
+      // Log the login event
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.email) {
+        const ua = request.headers.get('user-agent') || '';
+        await supabase.from('access_logs').insert({
+          user_id: user.id,
+          user_email: user.email,
+          action: 'login',
+          path: '/auth/callback',
+          user_agent: ua,
+        });
+      }
       return NextResponse.redirect(`${origin}${next}`);
     }
   }

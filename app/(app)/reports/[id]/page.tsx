@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { exportToExcel } from '@/lib/reports/excel-export';
+import { logAction } from '@/lib/db/access-logs';
 import type { Report } from '@/types/database';
 
 export default function ReportViewPage() {
@@ -45,6 +47,13 @@ export default function ReportViewPage() {
     a.download = `${report.title} - ${report.period}.html`;
     a.click();
     URL.revokeObjectURL(url);
+    logAction(supabase, 'report_exported_html', `/reports/${id}`);
+  };
+
+  const handleExportExcel = () => {
+    if (!report.report_data) return;
+    exportToExcel(report.report_data, report.title, report.period);
+    logAction(supabase, 'report_exported_excel', `/reports/${id}`);
   };
 
   return (
@@ -66,6 +75,12 @@ export default function ReportViewPage() {
           className="px-4 py-2 text-sm font-medium bg-gray-800 text-white rounded-lg hover:bg-gray-900"
         >
           Imprimir como PDF
+        </button>
+        <button
+          onClick={handleExportExcel}
+          className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
+        >
+          Exportar Excel
         </button>
         <button
           onClick={handleDownload}

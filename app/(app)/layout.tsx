@@ -1,4 +1,5 @@
 import Navbar from '@/components/ui/Navbar';
+import AccessLogger from '@/components/ui/AccessLogger';
 
 export default function AppLayout({
   children,
@@ -8,6 +9,7 @@ export default function AppLayout({
   return (
     <>
       <Navbar />
+      <AccessLogger />
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {children}
       </main>

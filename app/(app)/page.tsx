@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { logAction } from '@/lib/db/access-logs';
 import { formatDate } from '@/lib/utils/formatting';
 import type { Client } from '@/types/database';
 
@@ -72,6 +73,7 @@ export default function HomePage() {
     } else {
       const { data: { user } } = await supabase.auth.getUser();
       await supabase.from('clients').insert({ name: name.trim(), notes: notes.trim() || null, logo_url: logoUrl, created_by: user?.id });
+      logAction(supabase, 'client_created', '/');
     }
     setSaving(false); setShowModal(false); loadClients();
   };
