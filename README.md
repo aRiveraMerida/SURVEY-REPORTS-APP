@@ -10,7 +10,8 @@ Aplicacion web para generar informes profesionales a partir de datos de encuesta
 - **Filtrado por pregunta**: cada pregunta puede tener un `filterColumn`/`filterValues` para segmentar los datos antes de calcular resultados.
 - **Autenticacion con Supabase**: Magic Link (sin contrasena). RLS habilitado en todas las tablas.
 - **Gestion de clientes y emisor**: configuracion de empresa emisora (logo, contacto) y clientes (logo, nombre) almacenados en Supabase.
-- **Exportacion**: el informe generado se puede descargar como archivo HTML independiente listo para imprimir o convertir a PDF.
+- **Exportacion multiple**: descarga de informes en HTML, exportacion de datos a Excel (.xlsx) con hojas de resumen y detalle por pregunta, e impresion directa a PDF.
+- **Registro de accesos**: log automatico de accesos y acciones clave (login, creacion de informes, exportaciones, analisis IA) visible desde la propia aplicacion.
 
 ## Stack tecnologico
 
@@ -35,20 +36,24 @@ survey-reports-app/
 │   ├── auth/callback/route.ts      # Callback de Supabase Auth
 │   ├── api/analyze/route.ts        # API Route que invoca Claude
 │   └── (app)/                      # Grupo de rutas autenticadas
-│       ├── layout.tsx              # Layout con Navbar
+│       ├── layout.tsx              # Layout con Navbar + AccessLogger
 │       ├── page.tsx                # Dashboard principal
+│       ├── access-logs/page.tsx    # Registro de accesos (logs)
 │       ├── clients/[id]/page.tsx   # Detalle/edicion de cliente
 │       ├── reports/new/page.tsx    # Asistente de creacion de informe (3 pasos)
 │       ├── reports/[id]/page.tsx   # Vista previa del informe generado
 │       └── settings/page.tsx       # Configuracion del emisor y API Key
 ├── components/
-│   └── ui/Navbar.tsx               # Barra de navegacion
+│   └── ui/
+│       ├── Navbar.tsx              # Barra de navegacion
+│       └── AccessLogger.tsx        # Registro automatico de accesos
 ├── lib/
 │   ├── ai/prompts.ts               # Prompt del sistema para Claude
 │   ├── db/
 │   │   ├── clients.ts              # CRUD de clientes en Supabase
 │   │   ├── emitter.ts              # CRUD de configuracion del emisor
-│   │   └── reports.ts              # CRUD de informes en Supabase
+│   │   ├── reports.ts              # CRUD de informes en Supabase
+│   │   └── access-logs.ts          # Registro y consulta de logs de acceso
 │   ├── processing/
 │   │   ├── parser.ts               # Parseo de archivos Excel/CSV
 │   │   ├── stats.ts                # buildColumnStats() — estadisticas por columna
@@ -58,7 +63,8 @@ survey-reports-app/
 │   │   ├── charts-html.ts          # Plantilla HTML para informes de graficos
 │   │   ├── table-html.ts           # Plantilla HTML para informes de tabla
 │   │   ├── flowchart-html.ts       # Plantilla HTML para informes de flujo
-│   │   └── chart-renderer.ts       # Renderizado de graficos con Chart.js
+│   │   ├── chart-renderer.ts       # Renderizado de graficos con Chart.js
+│   │   └── excel-export.ts         # Exportacion de datos a Excel (.xlsx)
 │   ├── supabase/
 │   │   ├── client.ts               # Cliente Supabase para el navegador
 │   │   ├── server.ts               # Cliente Supabase para Server Components
@@ -70,7 +76,8 @@ survey-reports-app/
 ├── supabase/
 │   └── migrations/
 │       ├── 001_initial.sql         # Esquema inicial (emitter_settings, clients, reports, RLS)
-│       └── 002_simplify_for_ai.sql # Simplificacion: elimina client_configs, ai_analysis en reports
+│       ├── 002_simplify_for_ai.sql # Simplificacion: elimina client_configs, ai_analysis en reports
+│       └── 003_access_logs.sql     # Tabla de registro de accesos
 └── package.json
 ```
 
@@ -109,6 +116,7 @@ Ve al **SQL Editor** de tu proyecto en Supabase y ejecuta los siguientes archivo
 
 1. `supabase/migrations/001_initial.sql` — Crea las tablas `emitter_settings`, `clients`, `reports`, habilita RLS, crea el bucket de logos y las politicas de acceso.
 2. `supabase/migrations/002_simplify_for_ai.sql` — Anade columnas `report_type` y `ai_analysis` a `reports`, elimina la tabla `client_configs`.
+3. `supabase/migrations/003_access_logs.sql` — Crea la tabla `access_logs` para el registro de accesos y acciones, con indices y politicas RLS.
 
 ### 5. Configurar variables de entorno
 
@@ -222,7 +230,7 @@ En este paso puedes:
 - El procesador (`processor.ts`) recorre las preguntas activas, aplica filtros por pregunta si existen, calcula frecuencias y genera los datos.
 - La plantilla HTML correspondiente genera el informe final con portada, graficos/tablas y pie de pagina.
 - El informe se guarda en Supabase y se muestra en pantalla.
-- Desde la vista del informe puedes **descargarlo como HTML**.
+- Desde la vista del informe puedes **descargarlo como HTML**, **exportar los datos a Excel** o **imprimir como PDF**.
 
 ## Scripts disponibles
 
@@ -252,6 +260,20 @@ Empresas para las que se generan informes.
 Informes generados.
 
 - `client_id`, `title`, `period`, `report_type` (charts/table/flowchart), `report_html` (HTML completo), `report_data` (JSON con datos procesados), `ai_analysis` (JSON con analisis de Claude), `created_by`
+
+### access_logs
+
+Registro de accesos y acciones realizadas en la plataforma.
+
+- `user_id`, `user_email`, `action` (page_view, login, report_created, report_exported_html, report_exported_excel, data_analyzed, client_created), `path`, `ip_address`, `user_agent`, `created_at`
+
+Acciones registradas automaticamente:
+- **page_view**: acceso a cualquier pagina (deduplicado a 1 registro cada 30 minutos)
+- **login**: inicio de sesion via Magic Link
+- **report_created**: guardado de un informe nuevo
+- **report_exported_html / report_exported_excel**: descarga de informe
+- **data_analyzed**: analisis de datos con IA
+- **client_created**: creacion de un nuevo cliente
 
 ### Row Level Security
 
