@@ -20,6 +20,8 @@ export default function ReportViewPage() {
   const [sendFile, setSendFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [manualEmails, setManualEmails] = useState<string[]>([]);
+  const [newManualEmail, setNewManualEmail] = useState('');
 
   const supabase = createClient();
 
@@ -96,15 +98,21 @@ export default function ReportViewPage() {
     logAction(supabase, 'report_exported_excel', `/reports/${id}`);
   };
 
-  const handleSendEmail = async () => {
-    if (!report || !sendFile || !client) return;
+  // Merge client emails + manual emails
+  const allRecipients = [
+    ...(client?.contact_emails || []),
+    ...manualEmails,
+  ].filter((v, i, a) => a.indexOf(v) === i); // deduplicate
 
-    if (!client.contact_emails || client.contact_emails.length === 0) {
-      setSendResult({ type: 'error', text: 'El cliente no tiene emails de contacto configurados. Edítalo en el dashboard.' });
+  const handleSendEmail = async () => {
+    if (!report || !sendFile) return;
+
+    if (allRecipients.length === 0) {
+      setSendResult({ type: 'error', text: 'Añade al menos un destinatario. Puedes escribirlo abajo o configurar emails en el cliente desde el dashboard.' });
       return;
     }
 
-    if (!confirm(`Se enviará el informe PDF y el archivo original${client.file_password ? ' (encriptado)' : ''} a:\n\n${client.contact_emails.join('\n')}\n\n¿Continuar?`)) {
+    if (!confirm(`Se enviará el informe PDF y el archivo original${client?.file_password ? ' (encriptado)' : ''} a:\n\n${allRecipients.join('\n')}\n\n¿Continuar?`)) {
       return;
     }
 
@@ -128,6 +136,7 @@ export default function ReportViewPage() {
           originalFileName: sendFile.name,
           title: report.title,
           period: report.period,
+          overrideEmails: allRecipients,
         }),
       });
 
@@ -188,16 +197,60 @@ export default function ReportViewPage() {
 
       {/* Send email panel */}
       {showSendPanel && (
-        <div className="mb-4 bg-white rounded-lg border border-blue-200 p-5">
-          <h3 className="text-sm font-semibold text-gray-900 mb-1">Enviar informe por email</h3>
-          {client && (
-            <p className="text-xs text-gray-500 mb-3">
-              Destinatarios: {client.contact_emails?.length
-                ? client.contact_emails.join(', ')
-                : <span className="text-amber-600">Sin emails configurados</span>}
-              {client.file_password && <span className="ml-2 text-gray-400">· Archivo encriptado con contraseña</span>}
-            </p>
+        <div className="mb-4 bg-white rounded-lg border border-blue-200 p-5 space-y-4">
+          <h3 className="text-sm font-semibold text-gray-900">Enviar informe por email</h3>
+
+          {/* Recipients */}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Destinatarios</label>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {allRecipients.map((email, i) => {
+                const isFromClient = client?.contact_emails?.includes(email);
+                return (
+                  <span key={i} className={`inline-flex items-center gap-1 px-2 py-1 rounded text-sm ${
+                    isFromClient ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-700'
+                  }`}>
+                    {email}
+                    {!isFromClient && (
+                      <button onClick={() => setManualEmails(manualEmails.filter(e => e !== email))} className="text-gray-400 hover:text-red-500">×</button>
+                    )}
+                  </span>
+                );
+              })}
+              {allRecipients.length === 0 && (
+                <span className="text-xs text-amber-600">Sin destinatarios. Añade uno abajo o configura emails en el cliente.</span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={newManualEmail}
+                onChange={(e) => setNewManualEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const email = newManualEmail.trim();
+                    if (email && !allRecipients.includes(email)) { setManualEmails([...manualEmails, email]); setNewManualEmail(''); }
+                  }
+                }}
+                placeholder="Añadir email destinatario"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const email = newManualEmail.trim();
+                  if (email && !allRecipients.includes(email)) { setManualEmails([...manualEmails, email]); setNewManualEmail(''); }
+                }}
+                className="px-3 py-2 text-sm bg-gray-100 rounded-lg hover:bg-gray-200"
+              >Añadir</button>
+            </div>
+          </div>
+
+          {client?.file_password && (
+            <p className="text-xs text-gray-400">El archivo original se enviará encriptado con contraseña.</p>
           )}
+
           <div className="flex items-center gap-3">
             <label className="flex-1">
               <span className="block text-xs font-medium text-gray-600 mb-1">Archivo original (Excel/CSV) para adjuntar</span>
@@ -210,10 +263,10 @@ export default function ReportViewPage() {
             </label>
             <button
               onClick={handleSendEmail}
-              disabled={sending || !sendFile}
+              disabled={sending || !sendFile || allRecipients.length === 0}
               className="px-5 py-2.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 self-end"
             >
-              {sending ? 'Enviando...' : 'Enviar'}
+              {sending ? 'Enviando...' : `Enviar a ${allRecipients.length}`}
             </button>
           </div>
           {sendResult && (

@@ -199,14 +199,18 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Cliente no encontrado.' }, { status: 404 });
       }
 
-      // Validate emails
-      const validEmails = (client.contact_emails || []).filter(
-        (email: string) => EMAIL_REGEX.test(email)
+      // Use override emails if provided, otherwise fall back to client emails
+      const emailSource = (body.overrideEmails && Array.isArray(body.overrideEmails) && body.overrideEmails.length > 0)
+        ? body.overrideEmails
+        : (client.contact_emails || []);
+
+      const validEmails = emailSource.filter(
+        (email: string) => typeof email === 'string' && EMAIL_REGEX.test(email)
       );
 
       if (validEmails.length === 0) {
         return NextResponse.json(
-          { error: 'El cliente no tiene emails de contacto válidos configurados.' },
+          { error: 'No hay destinatarios válidos. Añade emails de contacto al cliente o especifica destinatarios.' },
           { status: 400 }
         );
       }
