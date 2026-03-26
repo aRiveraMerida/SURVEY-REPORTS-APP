@@ -21,6 +21,9 @@ export default function HomePage() {
   const [notes, setNotes] = useState('');
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [contactEmails, setContactEmails] = useState<string[]>([]);
+  const [newContactEmail, setNewContactEmail] = useState('');
+  const [filePassword, setFilePassword] = useState('');
   const [saving, setSaving] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
 
@@ -52,10 +55,12 @@ export default function HomePage() {
   useEffect(() => { loadClients(); }, [loadClients]);
 
   const openCreate = () => {
-    setEditingClient(null); setName(''); setNotes(''); setLogoFile(null); setLogoPreview(null); setShowModal(true);
+    setEditingClient(null); setName(''); setNotes(''); setLogoFile(null); setLogoPreview(null);
+    setContactEmails([]); setNewContactEmail(''); setFilePassword(''); setShowModal(true);
   };
   const openEdit = (c: Client) => {
-    setEditingClient(c); setName(c.name); setNotes(c.notes || ''); setLogoFile(null); setLogoPreview(c.logo_url); setShowModal(true);
+    setEditingClient(c); setName(c.name); setNotes(c.notes || ''); setLogoFile(null); setLogoPreview(c.logo_url);
+    setContactEmails(c.contact_emails || []); setNewContactEmail(''); setFilePassword(c.file_password || ''); setShowModal(true);
   };
 
   const handleSave = async () => {
@@ -68,11 +73,18 @@ export default function HomePage() {
       const { error } = await supabase.storage.from('logos').upload(fileName, logoFile, { upsert: true });
       if (!error) { logoUrl = supabase.storage.from('logos').getPublicUrl(fileName).data.publicUrl; }
     }
+    const clientData = {
+      name: name.trim(),
+      notes: notes.trim() || null,
+      logo_url: logoUrl,
+      contact_emails: contactEmails,
+      file_password: filePassword.trim() || null,
+    };
     if (editingClient) {
-      await supabase.from('clients').update({ name: name.trim(), notes: notes.trim() || null, logo_url: logoUrl }).eq('id', editingClient.id);
+      await supabase.from('clients').update(clientData).eq('id', editingClient.id);
     } else {
       const { data: { user } } = await supabase.auth.getUser();
-      await supabase.from('clients').insert({ name: name.trim(), notes: notes.trim() || null, logo_url: logoUrl, created_by: user?.id });
+      await supabase.from('clients').insert({ ...clientData, created_by: user?.id });
       logAction(supabase, 'client_created', '/');
     }
     setSaving(false); setShowModal(false); loadClients();
@@ -193,6 +205,48 @@ export default function HomePage() {
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) { setLogoFile(f); setLogoPreview(URL.createObjectURL(f)); } }} />
                   </label>
                 </div>
+              </div>
+
+              {/* Email recipients */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Emails de contacto</label>
+                <p className="text-xs text-gray-400 mb-2">Destinatarios para el envío de informes</p>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {contactEmails.map((email, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-sm">
+                      {email}
+                      <button onClick={() => setContactEmails(contactEmails.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500">×</button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input type="email" value={newContactEmail}
+                    onChange={(e) => setNewContactEmail(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newContactEmail.trim()) {
+                        e.preventDefault();
+                        setContactEmails([...contactEmails, newContactEmail.trim()]);
+                        setNewContactEmail('');
+                      }
+                    }}
+                    placeholder="email@cliente.com"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                  <button type="button" onClick={() => {
+                    if (newContactEmail.trim()) {
+                      setContactEmails([...contactEmails, newContactEmail.trim()]);
+                      setNewContactEmail('');
+                    }
+                  }} className="px-3 py-2 text-sm bg-gray-100 rounded-lg hover:bg-gray-200">Añadir</button>
+                </div>
+              </div>
+
+              {/* File encryption password */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña para ficheros</label>
+                <p className="text-xs text-gray-400 mb-2">El archivo Excel adjunto se enviará encriptado con esta contraseña</p>
+                <input type="text" value={filePassword} onChange={(e) => setFilePassword(e.target.value)}
+                  placeholder="Contraseña de encriptación"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono" />
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">

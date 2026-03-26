@@ -10,6 +10,11 @@ export interface EmitterSettings {
   footer_web: string | null;
   footer_linkedin: string | null;
   footer_addresses: string[];
+  smtp_host: string | null;
+  smtp_port: number;
+  smtp_user: string | null;
+  smtp_pass: string | null;
+  smtp_from: string | null;
   updated_at: string;
 }
 
@@ -21,6 +26,8 @@ export interface Client {
   name: string;
   logo_url: string | null;
   notes: string | null;
+  contact_emails: string[];
+  file_password: string | null;
   created_at: string;
   created_by: string;
 }

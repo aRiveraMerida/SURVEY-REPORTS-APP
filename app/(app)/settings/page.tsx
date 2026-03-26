@@ -20,6 +20,15 @@ export default function SettingsPage() {
   const [linkedin, setLinkedin] = useState('');
   const [addresses, setAddresses] = useState('');
 
+  // SMTP settings
+  const [smtpHost, setSmtpHost] = useState('');
+  const [smtpPort, setSmtpPort] = useState('587');
+  const [smtpUser, setSmtpUser] = useState('');
+  const [smtpPass, setSmtpPass] = useState('');
+  const [smtpFrom, setSmtpFrom] = useState('');
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
+  const [testingSmtp, setTestingSmtp] = useState(false);
+
   // API key
   const [apiKey, setApiKey] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
@@ -53,6 +62,11 @@ export default function SettingsPage() {
       setWeb(data.footer_web || '');
       setLinkedin(data.footer_linkedin || '');
       setAddresses((data.footer_addresses || []).join('\n'));
+      setSmtpHost(data.smtp_host || '');
+      setSmtpPort(String(data.smtp_port || 587));
+      setSmtpUser(data.smtp_user || '');
+      setSmtpPass(data.smtp_pass || '');
+      setSmtpFrom(data.smtp_from || '');
     }
 
     // Load API key from localStorage
@@ -93,6 +107,11 @@ export default function SettingsPage() {
       footer_web: web || null,
       footer_linkedin: linkedin || null,
       footer_addresses: addresses.split('\n').filter(Boolean),
+      smtp_host: smtpHost.trim() || null,
+      smtp_port: parseInt(smtpPort) || 587,
+      smtp_user: smtpUser.trim() || null,
+      smtp_pass: smtpPass.trim() || null,
+      smtp_from: smtpFrom.trim() || null,
       updated_at: new Date().toISOString(),
     };
 
@@ -387,7 +406,88 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* Section 3: Backup */}
+      {/* Section 3: SMTP */}
+      <section className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">Configuración SMTP</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Servidor de correo para el envío de informes a clientes. Se guarda en la base de datos.
+        </p>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-4">
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Host SMTP</label>
+              <input type="text" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)}
+                placeholder="smtp.gmail.com" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Puerto</label>
+              <input type="text" value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)}
+                placeholder="587" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Usuario</label>
+              <input type="text" value={smtpUser} onChange={(e) => setSmtpUser(e.target.value)}
+                placeholder="usuario@empresa.com" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
+              <div className="relative">
+                <input type={showSmtpPass ? 'text' : 'password'} value={smtpPass}
+                  onChange={(e) => setSmtpPass(e.target.value)}
+                  placeholder="Contraseña SMTP"
+                  className="w-full px-3 py-2 pr-16 border border-gray-300 rounded-lg text-sm" />
+                <button onClick={() => setShowSmtpPass(!showSmtpPass)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600">
+                  {showSmtpPass ? 'Ocultar' : 'Mostrar'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email remitente (From)</label>
+            <input type="email" value={smtpFrom} onChange={(e) => setSmtpFrom(e.target.value)}
+              placeholder="informes@empresa.com" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={async () => {
+                if (!smtpHost || !smtpUser || !smtpPass || !smtpFrom) {
+                  setMessage({ type: 'error', text: 'Completa todos los campos SMTP antes de probar.' });
+                  return;
+                }
+                setTestingSmtp(true);
+                try {
+                  const res = await fetch('/api/send-report', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'test-smtp' }),
+                  });
+                  const result = await res.json();
+                  setMessage({ type: res.ok ? 'success' : 'error', text: result.message || result.error });
+                } catch {
+                  setMessage({ type: 'error', text: 'Error al conectar con el servidor.' });
+                }
+                setTestingSmtp(false);
+              }}
+              disabled={testingSmtp || !smtpHost}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+            >
+              {testingSmtp ? 'Probando...' : 'Probar conexión'}
+            </button>
+            <p className="text-xs text-gray-400">
+              Guarda primero la configuración y luego prueba la conexión.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Section 4: Backup */}
       <section className="bg-white rounded-lg border border-gray-200 p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Backup</h2>
 

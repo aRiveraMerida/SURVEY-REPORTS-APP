@@ -1,9 +1,8 @@
 import { createClient } from '@/lib/supabase/client';
 import type { Client } from '@/types/database';
 
-const supabase = createClient();
-
 export async function getClients(): Promise<Client[]> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from('clients')
     .select('*')
@@ -14,6 +13,7 @@ export async function getClients(): Promise<Client[]> {
 }
 
 export async function getClient(id: string): Promise<Client | null> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from('clients')
     .select('*')
@@ -28,6 +28,7 @@ export async function createClientRecord(
   name: string,
   logoUrl: string | null
 ): Promise<Client> {
+  const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   const { data, error } = await supabase
     .from('clients')
@@ -43,6 +44,7 @@ export async function updateClient(
   id: string,
   updates: { name?: string; logo_url?: string | null }
 ): Promise<Client> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from('clients')
     .update(updates)
@@ -55,11 +57,13 @@ export async function updateClient(
 }
 
 export async function deleteClient(id: string): Promise<void> {
+  const supabase = createClient();
   const { error } = await supabase.from('clients').delete().eq('id', id);
   if (error) throw error;
 }
 
 export async function uploadLogo(file: File, folder: string): Promise<string> {
+  const supabase = createClient();
   const ext = file.name.split('.').pop();
   const fileName = `${folder}/${Date.now()}.${ext}`;
 

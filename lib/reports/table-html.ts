@@ -1,4 +1,5 @@
 import type { ProcessedData, ReportStyle, AITableRow } from '@/types/database';
+import { buildCoverCSS, buildCoverHTML, esc } from './charts-html';
 
 interface TableConfig {
   rows: AITableRow[];
@@ -23,10 +24,10 @@ export function generateTableHTML(opts: GenerateTableOptions): string {
   const pageH = style.orientation === 'landscape' ? '210mm' : '297mm';
 
   const clientLogo = clientLogoBase64
-    ? `<img src="${clientLogoBase64}" style="max-height:60px;max-width:150px;object-fit:contain;">`
+    ? `<img src="${clientLogoBase64}" style="max-height:36px;max-width:120px;object-fit:contain;opacity:0.6;">`
     : '';
   const emitterLogo = emitterLogoBase64
-    ? `<img src="${emitterLogoBase64}" style="max-height:40px;max-width:120px;object-fit:contain;">`
+    ? `<img src="${emitterLogoBase64}" style="max-height:30px;max-width:100px;object-fit:contain;opacity:0.5;">`
     : '';
 
   const funnel = data.funnel;
@@ -42,17 +43,19 @@ export function generateTableHTML(opts: GenerateTableOptions): string {
   const tableRowsHtml = resolvedRows
     .map((row) => {
       const indent = row.level * 24;
-      const bgColor = row.highlight ? `background:${style.headerGradient[0]};` : '';
-      const fontWeight = row.bold ? 'font-weight:bold;' : '';
-      const fontSize = row.level === 0 ? 'font-size:15px;' : 'font-size:13px;';
+      const isHighlight = row.highlight;
+      const bgColor = isHighlight ? `background:linear-gradient(90deg, ${style.primaryColor}0d, ${style.primaryColor}05);` : '';
+      const fontWeight = row.bold ? 'font-weight:700;' : 'font-weight:400;';
+      const fontSize = row.level === 0 ? 'font-size:14px;' : 'font-size:12.5px;';
       const borderLeft = row.level > 0 ? `border-left:3px solid ${style.chartColors[(row.level - 1) % style.chartColors.length]};` : '';
+      const textColor = row.level === 0 ? 'color:#1a1a1a;' : 'color:#444;';
 
       return `<tr style="${bgColor}">
-        <td style="padding:10px 12px;${fontWeight}${fontSize}${borderLeft}padding-left:${12 + indent}px;">
-          ${row.label}
+        <td style="${fontWeight}${fontSize}${borderLeft}${textColor}padding:9px 12px 9px ${12 + indent}px;">
+          ${esc(row.label)}
         </td>
-        <td style="padding:10px 12px;text-align:right;${fontWeight}${fontSize}">${row.count.toLocaleString('es-ES')}</td>
-        <td style="padding:10px 12px;text-align:right;${fontWeight}${fontSize}color:#666;">${row.pct}</td>
+        <td style="padding:9px 12px;text-align:right;${fontWeight}${fontSize}color:#1a1a1a;">${row.count.toLocaleString('es-ES')}</td>
+        <td style="padding:9px 12px;text-align:right;${fontWeight}${fontSize}color:#888;">${row.pct}</td>
       </tr>`;
     })
     .join('');
@@ -71,109 +74,92 @@ export function generateTableHTML(opts: GenerateTableOptions): string {
       .page:last-child { page-break-after: avoid; }
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: ${style.fontFamily}; background: #fff; color: #1a1a1a; }
+    body { font-family: ${style.fontFamily}; background: #fff; color: #1a1a1a; -webkit-font-smoothing: antialiased; }
     .page {
       width: ${pageW}; height: ${pageH};
       position: relative; overflow: hidden;
       background: ${style.backgroundColor};
     }
-    /* ---- COVER ---- */
-    .cover {
-      display: flex; flex-direction: column; justify-content: center; align-items: center;
-      background: linear-gradient(160deg, #fafafa 0%, #f0f5e6 100%);
-    }
-    .cover-accent {
-      position: absolute; top: 0; left: 0; right: 0; height: 6px;
-      background: linear-gradient(90deg, ${style.primaryColor}, ${style.accentColor});
-    }
-    .cover-content { text-align: center; }
-    .cover-title {
-      font-size: 42px; font-weight: 800; color: #1a1a1a;
-      letter-spacing: -0.5px; margin-bottom: 12px;
-    }
-    .cover-subtitle {
-      font-size: 22px; font-weight: 400; color: #555;
-    }
-    .cover-period {
-      display: inline-block; margin-top: 20px;
-      padding: 8px 28px; border-radius: 100px;
-      background: ${style.primaryColor}; color: #fff;
-      font-size: 14px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
-    }
-    .cover-logos {
-      position: absolute; bottom: 40px; left: 50px; right: 50px;
-      display: flex; justify-content: space-between; align-items: flex-end;
-    }
-    .cover-side-bar {
-      position: absolute; right: 0; top: 6px; bottom: 0; width: 6px;
-      background: linear-gradient(180deg, ${style.primaryColor}, transparent);
-    }
+    ${buildCoverCSS(style)}
     /* ---- TABLE PAGE ---- */
     .table-page {
-      padding: 28px 40px;
+      padding: 24px 36px 20px;
       display: flex; flex-direction: column;
+      background: linear-gradient(180deg, #fafcf8 0%, #ffffff 4%);
     }
     .t-top-bar {
-      height: 4px; border-radius: 2px;
-      background: linear-gradient(90deg, ${style.primaryColor}, ${style.accentColor});
+      height: 3px; border-radius: 2px;
+      background: linear-gradient(90deg, ${style.primaryColor}, ${style.accentColor}, ${style.primaryColor}44);
       margin-bottom: 16px;
     }
     .table-header {
-      font-size: 18px; font-weight: 700; color: #1a1a1a;
-      margin-bottom: 16px;
+      font-size: 17px; font-weight: 700; color: #1a1a1a;
+      margin-bottom: 16px; display: flex; align-items: baseline; gap: 10px;
     }
-    .table-header span { color: #888; font-weight: 400; }
+    .table-header-period {
+      font-size: 14px; color: #999; font-weight: 400;
+    }
     .summary-box {
-      display: flex; gap: 16px; margin-bottom: 20px;
+      display: flex; gap: 14px; margin-bottom: 18px;
     }
     .summary-item {
-      flex: 1; padding: 14px 20px; border-radius: 10px;
-      background: #f8faf5; border: 1px solid #e8f0d8; text-align: center;
+      flex: 1; padding: 16px 20px; border-radius: 12px;
+      background: linear-gradient(135deg, #f8faf5, #f2f6ec);
+      border: 1px solid #e4ecd4;
+      text-align: center; position: relative; overflow: hidden;
     }
-    .summary-item .value { font-size: 26px; font-weight: 800; color: ${style.primaryColor}; }
+    .summary-item::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, ${style.primaryColor}, ${style.accentColor});
+      border-radius: 2px 2px 0 0;
+    }
+    .summary-item .value {
+      font-size: 28px; font-weight: 800;
+      background: linear-gradient(135deg, ${style.primaryColor}, ${style.secondaryColor});
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
     .summary-item .label {
-      font-size: 10px; font-weight: 600; color: #888;
-      margin-top: 4px; letter-spacing: 0.5px; text-transform: uppercase;
+      font-size: 9px; font-weight: 700; color: #999;
+      margin-top: 4px; letter-spacing: 1px; text-transform: uppercase;
     }
     .data-table {
-      width: 100%; border-collapse: collapse; flex: 1;
+      width: 100%; border-collapse: separate; border-spacing: 0; flex: 1;
+      border-radius: 10px; overflow: hidden;
+      border: 1px solid #e8e8e8;
     }
     .data-table thead th {
-      background: ${style.primaryColor}; color: #fff;
-      padding: 10px 14px; text-align: left; font-size: 12px;
-      font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase;
+      background: linear-gradient(135deg, ${style.primaryColor}, ${style.secondaryColor});
+      color: #fff; padding: 11px 14px; text-align: left;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;
     }
     .data-table thead th:nth-child(2),
     .data-table thead th:nth-child(3) { text-align: right; }
-    .data-table tbody tr { border-bottom: 1px solid #f0f0f0; }
+    .data-table tbody tr { border-bottom: 1px solid #f2f2f2; }
     .data-table tbody tr:nth-child(even) { background: #fafafa; }
+    .data-table tbody tr:hover { background: #f5f8f0; }
     .page-footer {
-      display: flex; justify-content: space-between; align-items: flex-end;
-      padding-top: 8px; border-top: 1px solid #eee; margin-top: auto;
+      display: flex; justify-content: space-between; align-items: center;
+      padding-top: 10px; margin-top: auto;
+      border-top: 1px solid #f0f0f0;
+    }
+    .page-number {
+      font-size: 10px; color: #bbb; font-weight: 500;
+      letter-spacing: 0.5px;
     }
   </style>
 </head>
 <body>
   <!-- Cover -->
-  <div class="page cover">
-    <div class="cover-accent"></div>
-    <div class="cover-side-bar"></div>
-    <div class="cover-content">
-      ${clientLogo ? `<div style="margin-bottom:28px">${clientLogo}</div>` : ''}
-      <h1 class="cover-title">${clientName}</h1>
-      <p class="cover-subtitle">${title}</p>
-      <div class="cover-period">${period}</div>
-    </div>
-    <div class="cover-logos">
-      <div>${clientLogo}</div>
-      <div>${emitterLogo}</div>
-    </div>
-  </div>
+  ${buildCoverHTML(clientName, title, period, clientLogoBase64, emitterLogoBase64)}
 
   <!-- Table page -->
   <div class="page table-page">
     <div class="t-top-bar"></div>
-    <div class="table-header">${title} <span>— ${period.toUpperCase()}</span></div>
+    <div class="table-header">
+      ${esc(title)}
+      <span class="table-header-period">${esc(period.toUpperCase())}</span>
+    </div>
 
     <div class="summary-box">
       <div class="summary-item">
@@ -205,6 +191,7 @@ export function generateTableHTML(opts: GenerateTableOptions): string {
 
     <div class="page-footer">
       <div>${clientLogo}</div>
+      <div class="page-number">2 / 2</div>
       <div>${emitterLogo}</div>
     </div>
   </div>

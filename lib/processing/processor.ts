@@ -5,6 +5,7 @@ import type {
   FunnelData,
   ProcessedQuestion,
 } from '@/types/database';
+import { formatPercent } from '@/lib/utils/formatting';
 
 /**
  * Normalize cell values for consistent counting
@@ -79,9 +80,7 @@ export function processDataset(
     const total = Object.values(frequencies).reduce((a, b) => a + b, 0);
     const percentages: Record<string, string> = {};
     for (const [key, count] of Object.entries(frequencies)) {
-      percentages[key] = total > 0
-        ? (count / total * 100).toFixed(2).replace('.', ',') + '%'
-        : '0%';
+      percentages[key] = formatPercent(count, total);
     }
 
     return {
@@ -132,8 +131,7 @@ function calculateFunnel(
       counts.informed.total++;
       counts.informed.breakdown[value] = (counts.informed.breakdown[value] || 0) + 1;
     } else {
-      counts.notContacted.total++;
-      counts.notContacted.breakdown[value] = (counts.notContacted.breakdown[value] || 0) + 1;
+      // Unclassified values are skipped — they don't belong to any funnel category
     }
   }
 

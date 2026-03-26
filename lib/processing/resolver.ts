@@ -1,4 +1,5 @@
 import type { FunnelData } from '@/types/database';
+import { formatPercent } from '@/lib/utils/formatting';
 
 /**
  * Resolve a dot-path source string to a numeric value from funnel data.
@@ -52,6 +53,5 @@ export function resolvePercent(
 ): string {
   if (!percentOfSource) return '';
   const ref = resolveSource(percentOfSource, funnel);
-  if (ref === 0) return '0,00%';
-  return (value / ref * 100).toFixed(2).replace('.', ',') + '%';
+  return formatPercent(value, ref);
 }

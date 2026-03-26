@@ -42,7 +42,7 @@ export function exportToExcel(
     { Campo: 'Preguntas analizadas', Valor: data.questions.length },
   ];
 
-  if (data.funnel.total > 0 && data.funnel.contacted > 0) {
+  if (data.funnel.contacted > 0) {
     summaryRows.push(
       { Campo: '', Valor: '' },
       { Campo: 'EMBUDO DE CONTACTO', Valor: '' },

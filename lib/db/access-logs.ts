@@ -11,6 +11,8 @@ export async function logAccess(
   path: string,
   action: string = 'page_view'
 ) {
+  if (typeof window === 'undefined') return;
+
   // Deduplication: skip if logged recently
   const lastLog = localStorage.getItem(LOG_COOLDOWN_KEY);
   if (lastLog && Date.now() - parseInt(lastLog, 10) < LOG_COOLDOWN_MS) {
@@ -39,6 +41,8 @@ export async function logAction(
   action: string,
   path: string
 ) {
+  if (typeof window === 'undefined') return;
+
   const { data: { user } } = await supabase.auth.getUser();
   if (!user?.email) return;
 

@@ -1,9 +1,8 @@
 import { createClient } from '@/lib/supabase/client';
 import type { EmitterSettings } from '@/types/database';
 
-const supabase = createClient();
-
 export async function getEmitterSettings(): Promise<EmitterSettings | null> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from('emitter_settings')
     .select('*')
@@ -18,6 +17,7 @@ export async function updateEmitterSettings(
   id: string,
   updates: Partial<Omit<EmitterSettings, 'id'>>
 ): Promise<EmitterSettings> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from('emitter_settings')
     .update({ ...updates, updated_at: new Date().toISOString() })
@@ -32,6 +32,7 @@ export async function updateEmitterSettings(
 export async function createEmitterSettings(
   settings: Omit<EmitterSettings, 'id' | 'updated_at'>
 ): Promise<EmitterSettings> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from('emitter_settings')
     .insert(settings)
