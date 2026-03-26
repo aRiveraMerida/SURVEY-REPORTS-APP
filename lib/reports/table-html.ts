@@ -51,7 +51,7 @@ export function generateTableHTML(opts: GenerateTableOptions): string {
       const textColor = row.level === 0 ? 'color:#1a1a1a;' : 'color:#444;';
 
       return `<tr style="${bgColor}">
-        <td style="padding:9px 12px;${fontWeight}${fontSize}${borderLeft}${textColor}padding-left:${12 + indent}px;">
+        <td style="${fontWeight}${fontSize}${borderLeft}${textColor}padding:9px 12px 9px ${12 + indent}px;">
           ${esc(row.label)}
         </td>
         <td style="padding:9px 12px;text-align:right;${fontWeight}${fontSize}color:#1a1a1a;">${row.count.toLocaleString('es-ES')}</td>

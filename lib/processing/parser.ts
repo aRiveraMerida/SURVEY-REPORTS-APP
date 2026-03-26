@@ -66,7 +66,6 @@ async function parseExcel(file: File, sheetName?: string | null): Promise<Parsed
   }
 
   // First row as headers
-  const headerRow = jsonData[0] as string[];
   const maxCols = Math.max(...jsonData.map((r) => (r as string[]).length));
 
   // Generate column letter headers
@@ -142,10 +141,11 @@ async function parseCSV(file: File): Promise<ParsedData> {
 /**
  * Get column header text from the first row of raw data
  */
-export function getColumnHeaders(file: File, sheetName?: string | null): Promise<Record<string, string>> {
-  return new Promise(async (resolve) => {
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (ext === 'csv') {
+export async function getColumnHeaders(file: File, sheetName?: string | null): Promise<Record<string, string>> {
+  const ext = file.name.split('.').pop()?.toLowerCase();
+
+  if (ext === 'csv') {
+    return new Promise((resolve) => {
       Papa.parse(file, {
         preview: 1,
         complete(results) {
@@ -157,19 +157,19 @@ export function getColumnHeaders(file: File, sheetName?: string | null): Promise
           resolve(headers);
         },
       });
-    } else {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
-      const sheet = sheetName && workbook.SheetNames.includes(sheetName)
-        ? workbook.Sheets[sheetName]
-        : workbook.Sheets[workbook.SheetNames[0]];
-      const data = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: '' });
-      const headers: Record<string, string> = {};
-      const row = (data[0] as string[]) || [];
-      row.forEach((val, i) => {
-        headers[indexToColumnLetter(i)] = String(val);
-      });
-      resolve(headers);
-    }
+    });
+  }
+
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const sheet = sheetName && workbook.SheetNames.includes(sheetName)
+    ? workbook.Sheets[sheetName]
+    : workbook.Sheets[workbook.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: '' });
+  const headers: Record<string, string> = {};
+  const row = (data[0] as string[]) || [];
+  row.forEach((val, i) => {
+    headers[indexToColumnLetter(i)] = String(val);
   });
+  return headers;
 }
