@@ -278,6 +278,60 @@ function NewReportContent() {
     logAction(supabase, 'report_exported_excel', '/reports/new');
   };
 
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handleSendEmail = async () => {
+    if (!reportHtml || !file || !selectedClient) return;
+
+    // Validate client has emails configured
+    if (!selectedClient.contact_emails || selectedClient.contact_emails.length === 0) {
+      setSendResult({ type: 'error', text: 'El cliente no tiene emails de contacto configurados. Edítalo en el dashboard.' });
+      return;
+    }
+
+    if (!confirm(`Se enviará el informe PDF y el archivo original${selectedClient.file_password ? ' (encriptado)' : ''} a:\n\n${selectedClient.contact_emails.join('\n')}\n\n¿Continuar?`)) {
+      return;
+    }
+
+    setSending(true);
+    setSendResult(null);
+
+    try {
+      // Convert original file to base64
+      const arrayBuffer = await file.arrayBuffer();
+      const base64 = btoa(
+        new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+      );
+
+      const res = await fetch('/api/send-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'send-report',
+          clientId: selectedClientId,
+          reportHtml,
+          originalFileBase64: base64,
+          originalFileName: file.name,
+          title,
+          period,
+        }),
+      });
+
+      const result = await res.json();
+      if (res.ok) {
+        setSendResult({ type: 'success', text: result.message });
+        logAction(supabase, 'report_emailed', '/reports/new');
+      } else {
+        setSendResult({ type: 'error', text: result.error });
+      }
+    } catch (err) {
+      setSendResult({ type: 'error', text: 'Error de conexión: ' + (err as Error).message });
+    }
+
+    setSending(false);
+  };
+
   const stepLabels = ['Datos', 'Análisis IA', 'Informe'];
 
   return (
@@ -546,11 +600,26 @@ function NewReportContent() {
               className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50">
               HTML
             </button>
+            <button onClick={handleSendEmail} disabled={sending || !file}
+              className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              title={selectedClient?.contact_emails?.length ? `Enviar a: ${selectedClient.contact_emails.join(', ')}` : 'Sin emails configurados'}>
+              {sending ? 'Enviando...' : 'Enviar por email'}
+            </button>
             <button onClick={handleSave} disabled={saving}
               className="px-6 py-2 text-sm font-medium bg-corp text-white rounded-lg hover:bg-corp-dark disabled:opacity-50">
               {saving ? 'Guardando...' : 'Guardar'}
             </button>
           </div>
+
+          {sendResult && (
+            <div className={`p-3 rounded-lg text-sm ${
+              sendResult.type === 'success'
+                ? 'bg-green-50 text-green-700 border border-green-200'
+                : 'bg-red-50 text-red-700 border border-red-200'
+            }`}>
+              {sendResult.text}
+            </div>
+          )}
 
           {apiCost && (
             <div className="text-xs text-gray-400 text-right">
