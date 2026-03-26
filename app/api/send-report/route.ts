@@ -278,11 +278,13 @@ export async function POST(request: NextRequest) {
             content: zipBuffer,
             contentType: 'application/zip',
           });
-        } catch {
-          return NextResponse.json(
-            { error: 'Error al encriptar el archivo. Inténtalo de nuevo.' },
-            { status: 500 }
-          );
+        } catch (encErr) {
+          // Encryption failed — attach file without encryption
+          console.error('ZIP encryption failed, attaching unencrypted:', encErr);
+          attachments.push({
+            filename: sanitizeFileName(originalFileName),
+            content: originalBuffer,
+          });
         }
       } else {
         attachments.push({
