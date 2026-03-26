@@ -111,7 +111,11 @@ export const DEFAULT_STYLE = {
   headerGradient: ['#53860F', '#7AB317'] as [string, string],
   fontFamily: "'Inter', sans-serif",
   questionNumberColor: '#53860F',
-  chartColors: ['#53860F', '#7AB317', '#2D4A06', '#A8D65B', '#FFC107', '#3B82F6', '#EF4444', '#8B5CF6', '#F97316'],
+  chartColors: [
+    '#53860F', '#7AB317', '#3B82F6', '#F59E0B', '#EF4444',
+    '#8B5CF6', '#06B6D4', '#EC4899', '#10B981', '#F97316',
+    '#6366F1', '#14B8A6', '#E11D48', '#A855F7', '#0EA5E9',
+  ],
   pageSize: 'A4' as const,
   orientation: 'landscape' as const,
 };
