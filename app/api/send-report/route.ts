@@ -52,40 +52,55 @@ function createTransporter(smtp: SmtpConfig) {
 }
 
 async function generatePdf(html: string): Promise<Buffer | null> {
+  const isLandscape = html.includes('landscape');
+  const pdfOptions = {
+    format: 'A4' as const,
+    landscape: isLandscape,
+    printBackground: true,
+    margin: { top: 0, right: 0, bottom: 0, left: 0 },
+    timeout: 30000,
+  };
+
+  // Strategy 1: @sparticuz/chromium (Vercel / serverless)
   try {
     const chromium = await import('@sparticuz/chromium');
-    const puppeteer = await import('puppeteer-core');
-
+    const puppeteerCore = await import('puppeteer-core');
     const executablePath = await chromium.default.executablePath();
-
-    const browser = await puppeteer.default.launch({
+    const browser = await puppeteerCore.default.launch({
       args: chromium.default.args,
       executablePath,
       headless: true,
     });
-
     try {
       const page = await browser.newPage();
       await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
-
-      const isLandscape = html.includes('landscape');
-      const pdfBuffer = await page.pdf({
-        format: 'A4',
-        landscape: isLandscape,
-        printBackground: true,
-        margin: { top: 0, right: 0, bottom: 0, left: 0 },
-        timeout: 30000,
-      });
-
+      const pdfBuffer = await page.pdf(pdfOptions);
       return Buffer.from(pdfBuffer);
     } finally {
       await browser.close();
     }
   } catch {
-    // Puppeteer/Chromium not available — fall back to HTML
-    generatePdfAvailable = false;
-    return null;
+    // Not in serverless — try full puppeteer
   }
+
+  // Strategy 2: Full puppeteer (local dev — bundles its own Chromium)
+  try {
+    const puppeteer = await import('puppeteer');
+    const browser = await puppeteer.default.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+      const pdfBuffer = await page.pdf(pdfOptions);
+      return Buffer.from(pdfBuffer);
+    } finally {
+      await browser.close();
+    }
+  } catch {
+    // Puppeteer not available either
+  }
+
+  generatePdfAvailable = false;
+  return null;
 }
 
 function sanitizeFileName(name: string): string {
