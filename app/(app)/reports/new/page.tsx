@@ -228,9 +228,39 @@ function NewReportContent() {
     setSaving(false);
   };
 
+  const [printing, setPrinting] = useState(false);
+
   const handlePrint = () => {
+    setPrinting(true);
     const w = window.open('', '_blank');
-    if (w) { w.document.write(reportHtml); w.document.close(); setTimeout(() => w.print(), 500); }
+    if (!w) {
+      alert('No se pudo abrir la ventana de impresión. Permite las ventanas emergentes e inténtalo de nuevo.');
+      setPrinting(false);
+      return;
+    }
+    w.document.write(reportHtml);
+    w.document.close();
+
+    const triggerPrint = () => {
+      w.onafterprint = () => { w.close(); };
+      w.print();
+      setPrinting(false);
+    };
+
+    if (w.document.fonts && w.document.fonts.ready) {
+      w.document.fonts.ready.then(() => {
+        const images = Array.from(w.document.images);
+        if (images.length === 0) { triggerPrint(); return; }
+        let loaded = 0;
+        const checkDone = () => { if (++loaded >= images.length) triggerPrint(); };
+        images.forEach((img) => {
+          if (img.complete) { checkDone(); }
+          else { img.onload = checkDone; img.onerror = checkDone; }
+        });
+      });
+    } else {
+      setTimeout(triggerPrint, 1200);
+    }
   };
 
   const handleDownload = () => {
@@ -504,9 +534,9 @@ function NewReportContent() {
             </div>
 
             <div className="flex-1" />
-            <button onClick={handlePrint}
-              className="px-4 py-2 text-sm font-medium bg-gray-800 text-white rounded-lg hover:bg-gray-900">
-              PDF
+            <button onClick={handlePrint} disabled={printing}
+              className="px-4 py-2 text-sm font-medium bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50">
+              {printing ? 'Preparando...' : 'PDF'}
             </button>
             <button onClick={handleExportExcel}
               className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50">

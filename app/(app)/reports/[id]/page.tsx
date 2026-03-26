@@ -30,12 +30,40 @@ export default function ReportViewPage() {
   if (loading) return <div className="text-center py-12 text-gray-400">Cargando informe...</div>;
   if (!report) return <div className="text-center py-12 text-gray-500">Informe no encontrado</div>;
 
+  const [printing, setPrinting] = useState(false);
+
   const handlePrint = () => {
+    setPrinting(true);
     const w = window.open('', '_blank');
-    if (w) {
-      w.document.write(report.report_html);
-      w.document.close();
-      setTimeout(() => w.print(), 500);
+    if (!w) {
+      alert('No se pudo abrir la ventana de impresión. Permite las ventanas emergentes e inténtalo de nuevo.');
+      setPrinting(false);
+      return;
+    }
+    w.document.write(report.report_html);
+    w.document.close();
+
+    const triggerPrint = () => {
+      w.onafterprint = () => { w.close(); };
+      w.print();
+      setPrinting(false);
+    };
+
+    // Wait for fonts and images to load before printing
+    if (w.document.fonts && w.document.fonts.ready) {
+      w.document.fonts.ready.then(() => {
+        const images = Array.from(w.document.images);
+        if (images.length === 0) { triggerPrint(); return; }
+        let loaded = 0;
+        const checkDone = () => { if (++loaded >= images.length) triggerPrint(); };
+        images.forEach((img) => {
+          if (img.complete) { checkDone(); }
+          else { img.onload = checkDone; img.onerror = checkDone; }
+        });
+      });
+    } else {
+      // Fallback for browsers without font loading API
+      setTimeout(triggerPrint, 1200);
     }
   };
 
@@ -72,9 +100,10 @@ export default function ReportViewPage() {
         </span>
         <button
           onClick={handlePrint}
-          className="px-4 py-2 text-sm font-medium bg-gray-800 text-white rounded-lg hover:bg-gray-900"
+          disabled={printing}
+          className="px-4 py-2 text-sm font-medium bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50"
         >
-          Imprimir como PDF
+          {printing ? 'Preparando PDF...' : 'Imprimir como PDF'}
         </button>
         <button
           onClick={handleExportExcel}
