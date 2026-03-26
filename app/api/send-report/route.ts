@@ -7,6 +7,9 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 
+// PDF generation is optional — puppeteer/chromium may not be available in all environments
+let generatePdfAvailable = true;
+
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 const MAX_HTML_SIZE = 10 * 1024 * 1024;  // 10 MB
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -48,34 +51,40 @@ function createTransporter(smtp: SmtpConfig) {
   });
 }
 
-async function generatePdf(html: string): Promise<Buffer> {
-  const chromium = await import('@sparticuz/chromium');
-  const puppeteer = await import('puppeteer-core');
-
-  const executablePath = await chromium.default.executablePath();
-
-  const browser = await puppeteer.default.launch({
-    args: chromium.default.args,
-    executablePath,
-    headless: true,
-  });
-
+async function generatePdf(html: string): Promise<Buffer | null> {
   try {
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+    const chromium = await import('@sparticuz/chromium');
+    const puppeteer = await import('puppeteer-core');
 
-    const isLandscape = html.includes('landscape');
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      landscape: isLandscape,
-      printBackground: true,
-      margin: { top: 0, right: 0, bottom: 0, left: 0 },
-      timeout: 30000,
+    const executablePath = await chromium.default.executablePath();
+
+    const browser = await puppeteer.default.launch({
+      args: chromium.default.args,
+      executablePath,
+      headless: true,
     });
 
-    return Buffer.from(pdfBuffer);
-  } finally {
-    await browser.close();
+    try {
+      const page = await browser.newPage();
+      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+
+      const isLandscape = html.includes('landscape');
+      const pdfBuffer = await page.pdf({
+        format: 'A4',
+        landscape: isLandscape,
+        printBackground: true,
+        margin: { top: 0, right: 0, bottom: 0, left: 0 },
+        timeout: 30000,
+      });
+
+      return Buffer.from(pdfBuffer);
+    } finally {
+      await browser.close();
+    }
+  } catch {
+    // Puppeteer/Chromium not available — fall back to HTML
+    generatePdfAvailable = false;
+    return null;
   }
 }
 
@@ -215,28 +224,34 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Generate PDF from report HTML
-      let pdfBuffer: Buffer;
-      try {
-        pdfBuffer = await generatePdf(reportHtml);
-      } catch {
-        return NextResponse.json(
-          { error: 'Error al generar el PDF. Inténtalo de nuevo.' },
-          { status: 500 }
-        );
-      }
-
       // Prepare attachments
       const attachments: nodemailer.SendMailOptions['attachments'] = [];
 
       const safeTitle = ((title || 'Informe') as string).replace(/[<>:"/\\|?*]/g, '').substring(0, 100);
       const safePeriod = ((period || '') as string).replace(/[<>:"/\\|?*]/g, '').substring(0, 50);
 
-      attachments.push({
-        filename: `${safeTitle} - ${safePeriod}.pdf`,
-        content: pdfBuffer,
-        contentType: 'application/pdf',
-      });
+      // Try PDF generation, fall back to HTML attachment
+      let attachedFormat = 'HTML';
+      if (generatePdfAvailable) {
+        const pdfBuffer = await generatePdf(reportHtml);
+        if (pdfBuffer) {
+          attachments.push({
+            filename: `${safeTitle} - ${safePeriod}.pdf`,
+            content: pdfBuffer,
+            contentType: 'application/pdf',
+          });
+          attachedFormat = 'PDF';
+        }
+      }
+
+      // If PDF failed or unavailable, attach as HTML
+      if (attachedFormat === 'HTML') {
+        attachments.push({
+          filename: `${safeTitle} - ${safePeriod}.html`,
+          content: Buffer.from(reportHtml, 'utf-8'),
+          contentType: 'text/html',
+        });
+      }
 
       // Original file: encrypt with ZIP if password configured, otherwise attach as-is
       if (client.file_password && client.file_password.trim()) {
@@ -273,7 +288,7 @@ export async function POST(request: NextRequest) {
               <h2 style="color:#53860F;margin-bottom:8px;">${safeTitle}</h2>
               <p style="color:#666;margin-bottom:20px;">Periodo: <strong>${safePeriod}</strong></p>
               <p style="color:#333;line-height:1.6;">
-                Adjunto encontrará el informe generado en formato PDF${client.file_password ? ' y el archivo de datos original en un ZIP protegido con contraseña' : ' y el archivo de datos original'}.
+                Adjunto encontrará el informe generado en formato ${attachedFormat}${client.file_password ? ' y el archivo de datos original en un ZIP protegido con contraseña' : ' y el archivo de datos original'}.
               </p>
               ${client.file_password ? '<p style="color:#888;font-size:13px;margin-top:16px;">El archivo ZIP está protegido con la contraseña que le fue comunicada previamente.</p>' : ''}
               <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
