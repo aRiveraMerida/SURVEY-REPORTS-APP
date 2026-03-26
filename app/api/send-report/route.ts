@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import nodemailer from 'nodemailer';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { writeFileSync, readFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
+
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+const MAX_HTML_SIZE = 10 * 1024 * 1024;  // 10 MB
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface SmtpConfig {
   host: string;
@@ -45,7 +49,6 @@ function createTransporter(smtp: SmtpConfig) {
 }
 
 async function generatePdf(html: string): Promise<Buffer> {
-  // Dynamic import to avoid issues if chromium is not available
   const chromium = await import('@sparticuz/chromium');
   const puppeteer = await import('puppeteer-core');
 
@@ -59,21 +62,27 @@ async function generatePdf(html: string): Promise<Buffer> {
 
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
 
-    // Extract page size and orientation from the HTML @page rule
     const isLandscape = html.includes('landscape');
     const pdfBuffer = await page.pdf({
       format: 'A4',
       landscape: isLandscape,
       printBackground: true,
       margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      timeout: 30000,
     });
 
     return Buffer.from(pdfBuffer);
   } finally {
     await browser.close();
   }
+}
+
+function sanitizeFileName(name: string): string {
+  return name
+    .replace(/[^a-zA-Z0-9._\-\s()áéíóúñÁÉÍÓÚÑ]/g, '_')
+    .substring(0, 200);
 }
 
 function encryptFileWithZip(
@@ -85,13 +94,14 @@ function encryptFileWithZip(
   mkdirSync(tmpDir, { recursive: true });
 
   try {
-    const inputPath = join(tmpDir, fileName);
+    const safeName = sanitizeFileName(fileName);
+    const inputPath = join(tmpDir, safeName);
     const zipPath = join(tmpDir, 'encrypted.zip');
 
     writeFileSync(inputPath, fileBuffer);
 
-    // Use system zip with password encryption
-    execSync(`zip -j -P "${password.replace(/"/g, '\\"')}" "${zipPath}" "${inputPath}"`, {
+    // Use execFileSync with argument array to prevent command injection
+    execFileSync('zip', ['-j', '-P', password, zipPath, inputPath], {
       timeout: 30000,
     });
 
@@ -105,6 +115,12 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const supabase = await createClient();
+
+    // Verify authentication
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: 'No autorizado.' }, { status: 401 });
+    }
 
     // Test SMTP connection
     if (body.action === 'test-smtp') {
@@ -120,9 +136,9 @@ export async function POST(request: NextRequest) {
         const transporter = createTransporter(smtp);
         await transporter.verify();
         return NextResponse.json({ message: 'Conexión SMTP exitosa.' });
-      } catch (err) {
+      } catch {
         return NextResponse.json(
-          { error: `Error de conexión SMTP: ${(err as Error).message}` },
+          { error: 'No se pudo conectar al servidor SMTP. Revisa la configuración.' },
           { status: 400 }
         );
       }
@@ -134,9 +150,33 @@ export async function POST(request: NextRequest) {
 
       if (!clientId || !reportHtml || !originalFileBase64 || !originalFileName) {
         return NextResponse.json(
-          { error: 'Faltan datos requeridos (clientId, reportHtml, originalFileBase64, originalFileName).' },
+          { error: 'Faltan datos requeridos.' },
           { status: 400 }
         );
+      }
+
+      // Validate input sizes
+      if (typeof reportHtml !== 'string' || reportHtml.length > MAX_HTML_SIZE) {
+        return NextResponse.json({ error: 'El HTML del informe es demasiado grande.' }, { status: 400 });
+      }
+
+      if (typeof originalFileName !== 'string' || originalFileName.length > 255) {
+        return NextResponse.json({ error: 'Nombre de archivo demasiado largo.' }, { status: 400 });
+      }
+
+      // Decode and validate file size
+      let originalBuffer: Buffer;
+      try {
+        originalBuffer = Buffer.from(originalFileBase64, 'base64');
+      } catch {
+        return NextResponse.json({ error: 'Error al decodificar el archivo.' }, { status: 400 });
+      }
+
+      if (originalBuffer.length === 0) {
+        return NextResponse.json({ error: 'El archivo está vacío.' }, { status: 400 });
+      }
+      if (originalBuffer.length > MAX_FILE_SIZE) {
+        return NextResponse.json({ error: 'El archivo supera el límite de 25 MB.' }, { status: 400 });
       }
 
       // Get SMTP config
@@ -159,9 +199,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Cliente no encontrado.' }, { status: 404 });
       }
 
-      if (!client.contact_emails || client.contact_emails.length === 0) {
+      // Validate emails
+      const validEmails = (client.contact_emails || []).filter(
+        (email: string) => EMAIL_REGEX.test(email)
+      );
+
+      if (validEmails.length === 0) {
         return NextResponse.json(
-          { error: 'El cliente no tiene emails de contacto configurados.' },
+          { error: 'El cliente no tiene emails de contacto válidos configurados.' },
           { status: 400 }
         );
       }
@@ -170,20 +215,19 @@ export async function POST(request: NextRequest) {
       let pdfBuffer: Buffer;
       try {
         pdfBuffer = await generatePdf(reportHtml);
-      } catch (err) {
+      } catch {
         return NextResponse.json(
-          { error: `Error al generar PDF: ${(err as Error).message}` },
+          { error: 'Error al generar el PDF. Inténtalo de nuevo.' },
           { status: 500 }
         );
       }
 
-      // Prepare original file attachment
-      const originalBuffer = Buffer.from(originalFileBase64, 'base64');
+      // Prepare attachments
       const attachments: nodemailer.SendMailOptions['attachments'] = [];
 
-      // PDF attachment
-      const safeTitle = (title || 'Informe').replace(/[<>:"/\\|?*]/g, '');
-      const safePeriod = (period || '').replace(/[<>:"/\\|?*]/g, '');
+      const safeTitle = ((title || 'Informe') as string).replace(/[<>:"/\\|?*]/g, '').substring(0, 100);
+      const safePeriod = ((period || '') as string).replace(/[<>:"/\\|?*]/g, '').substring(0, 50);
+
       attachments.push({
         filename: `${safeTitle} - ${safePeriod}.pdf`,
         content: pdfBuffer,
@@ -191,24 +235,24 @@ export async function POST(request: NextRequest) {
       });
 
       // Original file: encrypt with ZIP if password configured, otherwise attach as-is
-      if (client.file_password) {
+      if (client.file_password && client.file_password.trim()) {
         try {
-          const zipBuffer = encryptFileWithZip(originalBuffer, originalFileName, client.file_password);
-          const zipName = originalFileName.replace(/\.[^.]+$/, '') + '.zip';
+          const zipBuffer = encryptFileWithZip(originalBuffer, originalFileName, client.file_password.trim());
+          const safeOrigName = sanitizeFileName(originalFileName.replace(/\.[^.]+$/, ''));
           attachments.push({
-            filename: zipName,
+            filename: `${safeOrigName}.zip`,
             content: zipBuffer,
             contentType: 'application/zip',
           });
-        } catch (err) {
+        } catch {
           return NextResponse.json(
-            { error: `Error al encriptar archivo: ${(err as Error).message}` },
+            { error: 'Error al encriptar el archivo. Inténtalo de nuevo.' },
             { status: 500 }
           );
         }
       } else {
         attachments.push({
-          filename: originalFileName,
+          filename: sanitizeFileName(originalFileName),
           content: originalBuffer,
         });
       }
@@ -218,7 +262,7 @@ export async function POST(request: NextRequest) {
         const transporter = createTransporter(smtp);
         await transporter.sendMail({
           from: smtp.from,
-          to: client.contact_emails.join(', '),
+          to: validEmails.join(', '),
           subject: `${safeTitle} — ${safePeriod}`,
           html: `
             <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
@@ -236,20 +280,20 @@ export async function POST(request: NextRequest) {
         });
 
         return NextResponse.json({
-          message: `Informe enviado correctamente a ${client.contact_emails.join(', ')}`,
+          message: `Informe enviado correctamente a ${validEmails.join(', ')}`,
         });
-      } catch (err) {
+      } catch {
         return NextResponse.json(
-          { error: `Error al enviar email: ${(err as Error).message}` },
+          { error: 'Error al enviar el email. Revisa la configuración SMTP.' },
           { status: 500 }
         );
       }
     }
 
     return NextResponse.json({ error: 'Acción no reconocida.' }, { status: 400 });
-  } catch (err) {
+  } catch {
     return NextResponse.json(
-      { error: `Error interno: ${(err as Error).message}` },
+      { error: 'Error interno del servidor.' },
       { status: 500 }
     );
   }

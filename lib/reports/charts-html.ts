@@ -1,5 +1,15 @@
 import type { ProcessedData, ReportStyle } from '@/types/database';
 
+/** Escape HTML special characters to prevent XSS */
+function esc(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 interface GenerateOptions {
   title: string;
   period: string;
@@ -103,9 +113,9 @@ function buildCoverHTML(
     <div class="cover-corner cover-corner-br"></div>
     <div class="cover-content">
       <div class="cover-divider"></div>
-      <h1 class="cover-title">${clientName}</h1>
-      <p class="cover-subtitle">${title}</p>
-      <div class="cover-period">${period}</div>
+      <h1 class="cover-title">${esc(clientName)}</h1>
+      <p class="cover-subtitle">${esc(title)}</p>
+      <div class="cover-period">${esc(period)}</div>
     </div>
     <div class="cover-logos">
       <div class="cover-logo-client">${clientLogoImg}</div>
@@ -114,7 +124,7 @@ function buildCoverHTML(
   </div>`;
 }
 
-export { buildCoverCSS, buildCoverHTML };
+export { buildCoverCSS, buildCoverHTML, esc };
 
 export function generateChartsHTML(opts: GenerateOptions): string {
   const { title, period, clientName, clientLogoBase64, emitterLogoBase64, data, style, chartImages } = opts;
@@ -265,8 +275,8 @@ export function generateChartsHTML(opts: GenerateOptions): string {
         const pct = q.percentages[label] || '0%';
         return `<div class="legend-item">
           <span class="legend-color" style="background:${color}"></span>
-          <span class="legend-text" title="${label}">${label}</span>
-          <span class="legend-count">${count} (${pct})</span>
+          <span class="legend-text" title="${esc(label)}">${esc(label)}</span>
+          <span class="legend-count">${count} (${esc(pct)})</span>
         </div>`;
       })
       .join('');
@@ -278,9 +288,9 @@ export function generateChartsHTML(opts: GenerateOptions): string {
     <div class="q-top-bar"></div>
     <div class="question-header">
       <span class="q-number">${index + 1}</span>
-      <span class="q-text">${q.questionText}</span>
+      <span class="q-text">${esc(q.questionText)}</span>
     </div>
-    <p class="total-label">Total respuestas ${period.toUpperCase()}: <strong>${q.total}</strong></p>
+    <p class="total-label">Total respuestas ${esc(period.toUpperCase())}: <strong>${q.total}</strong></p>
     <div class="chart-area">
       ${isBarChart
         ? `<div class="chart-image-full-wrap">${chartImg ? `<img src="${chartImg}" class="chart-image-full">` : '<p>No chart</p>'}</div>`

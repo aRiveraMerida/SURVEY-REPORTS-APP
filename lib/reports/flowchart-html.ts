@@ -1,5 +1,5 @@
 import type { ProcessedData, ReportStyle, AIFlowchartPage, AIFlowchartNode } from '@/types/database';
-import { buildCoverCSS, buildCoverHTML } from './charts-html';
+import { buildCoverCSS, buildCoverHTML, esc } from './charts-html';
 
 type FlowchartPage = AIFlowchartPage;
 type FlowchartNode = AIFlowchartNode;
@@ -28,7 +28,7 @@ function renderNodeBox(
 
   return `<div class="fc-node" data-id="${node.id}" data-level="${node.level}"
       style="border-top:4px solid ${color};">
-    <div class="node-label">${node.label}</div>
+    <div class="node-label">${esc(node.label)}</div>
     <div class="node-count" style="background:linear-gradient(135deg, ${color}, ${color}cc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">${count.toLocaleString('es-ES')}</div>
     ${pct ? `<div class="node-pct">${pct}</div>` : ''}
   </div>`;
@@ -184,7 +184,7 @@ export function generateFlowchartHTML(opts: GenerateFlowchartOptions): string {
     html += `
   <div class="page fc-page">
     <div class="fc-top-bar"></div>
-    <div class="fc-page-header">${page.title}</div>
+    <div class="fc-page-header">${esc(page.title)}</div>
 
     <div class="fc-canvas">
       ${nodesHtml}

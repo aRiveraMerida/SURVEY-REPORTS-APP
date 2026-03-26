@@ -1,5 +1,5 @@
 import type { ProcessedData, ReportStyle, AITableRow } from '@/types/database';
-import { buildCoverCSS, buildCoverHTML } from './charts-html';
+import { buildCoverCSS, buildCoverHTML, esc } from './charts-html';
 
 interface TableConfig {
   rows: AITableRow[];
@@ -52,7 +52,7 @@ export function generateTableHTML(opts: GenerateTableOptions): string {
 
       return `<tr style="${bgColor}">
         <td style="padding:9px 12px;${fontWeight}${fontSize}${borderLeft}${textColor}padding-left:${12 + indent}px;">
-          ${row.label}
+          ${esc(row.label)}
         </td>
         <td style="padding:9px 12px;text-align:right;${fontWeight}${fontSize}color:#1a1a1a;">${row.count.toLocaleString('es-ES')}</td>
         <td style="padding:9px 12px;text-align:right;${fontWeight}${fontSize}color:#888;">${row.pct}</td>
@@ -157,8 +157,8 @@ export function generateTableHTML(opts: GenerateTableOptions): string {
   <div class="page table-page">
     <div class="t-top-bar"></div>
     <div class="table-header">
-      ${title}
-      <span class="table-header-period">${period.toUpperCase()}</span>
+      ${esc(title)}
+      <span class="table-header-period">${esc(period.toUpperCase())}</span>
     </div>
 
     <div class="summary-box">
