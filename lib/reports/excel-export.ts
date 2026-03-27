@@ -28,21 +28,55 @@ function sanitizeSheetName(name: string, existing: string[]): string {
  * Export processed report data to an Excel (.xlsx) file and trigger download.
  */
 export function exportToExcel(
-  data: ProcessedData,
+  rawData: ProcessedData | string,
   title: string,
   period: string
 ) {
+  // Handle case where data might be a JSON string (from Supabase JSONB)
+  let data: ProcessedData;
+  if (typeof rawData === 'string') {
+    try {
+      data = JSON.parse(rawData);
+    } catch {
+      alert('Error: los datos del informe no tienen un formato válido.');
+      return;
+    }
+  } else {
+    data = rawData;
+  }
+
+  // Validate data structure
+  if (!data || !data.questions || !Array.isArray(data.questions)) {
+    alert('Error: no hay datos de preguntas para exportar. Genera el informe primero.');
+    return;
+  }
+
+  if (data.questions.length === 0) {
+    alert('El informe no contiene preguntas analizadas. No se puede exportar un Excel vacío.');
+    return;
+  }
+
+  // Ensure each question has valid frequencies
+  const validQuestions = data.questions.filter(
+    (q) => q && q.frequencies && Object.keys(q.frequencies).length > 0
+  );
+
+  if (validQuestions.length === 0) {
+    alert('Las preguntas del informe no contienen datos de frecuencias. Verifica que el análisis se completó correctamente.');
+    return;
+  }
+
   const wb = XLSX.utils.book_new();
 
   // Sheet 1: Summary
   const summaryRows: Record<string, string | number>[] = [
     { Campo: 'Título', Valor: title },
     { Campo: 'Periodo', Valor: period },
-    { Campo: 'Total registros', Valor: data.totalRows },
-    { Campo: 'Preguntas analizadas', Valor: data.questions.length },
+    { Campo: 'Total registros', Valor: data.totalRows || 0 },
+    { Campo: 'Preguntas analizadas', Valor: validQuestions.length },
   ];
 
-  if (data.funnel.contacted > 0) {
+  if (data.funnel && data.funnel.contacted > 0) {
     summaryRows.push(
       { Campo: '', Valor: '' },
       { Campo: 'EMBUDO DE CONTACTO', Valor: '' },
@@ -61,7 +95,7 @@ export function exportToExcel(
   // Sheet 2: All questions data
   const questionsRows: Record<string, string | number>[] = [];
 
-  for (const q of data.questions) {
+  for (const q of validQuestions) {
     questionsRows.push({
       Pregunta: q.questionText,
       Respuesta: '',
@@ -91,7 +125,7 @@ export function exportToExcel(
 
   // Individual sheets per question
   const usedNames = ['Resumen', 'Datos'];
-  for (const q of data.questions) {
+  for (const q of validQuestions) {
     const rows = Object.entries(q.frequencies)
       .sort((a, b) => b[1] - a[1])
       .map(([label, count]) => ({
