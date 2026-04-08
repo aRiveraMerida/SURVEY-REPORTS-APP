@@ -10,6 +10,25 @@ const nextConfig: NextConfig = {
     "puppeteer-core",
     "@sparticuz/chromium",
   ],
+
+  // `serverExternalPackages` keeps @sparticuz/chromium loadable at
+  // runtime, but Next's file tracer only follows JavaScript require()
+  // calls — it can't see the brotli-compressed Chromium binary that
+  // the package reads via fs.readFileSync from its bin/ directory.
+  // Without this explicit include the function crashes at runtime with:
+  //
+  //   The input directory "/var/task/node_modules/@sparticuz/chromium/bin"
+  //   does not exist
+  //
+  // We apply it to both routes that call generatePdf().
+  outputFileTracingIncludes: {
+    "/api/generate-pdf": [
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+    "/api/send-report": [
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+  },
 };
 
 export default nextConfig;
