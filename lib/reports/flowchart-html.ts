@@ -18,12 +18,12 @@ interface GenerateFlowchartOptions {
 
 function renderNodeBox(
   node: FlowchartNode,
-  funnel: ProcessedData['funnel'],
+  data: ProcessedData,
   style: ReportStyle,
   nodeIndex: number
 ): string {
-  const count = resolveSource(node.source, funnel);
-  const pct = resolvePercent(count, node.percentOf, funnel);
+  const count = resolveSource(node.source, data);
+  const pct = resolvePercent(count, node.percentOf, data);
   const color = style.chartColors[nodeIndex % style.chartColors.length];
 
   return `<div class="fc-node" data-id="${node.id}" data-level="${node.level}"
@@ -54,7 +54,6 @@ export function generateFlowchartHTML(opts: GenerateFlowchartOptions): string {
 <head>
   <meta charset="utf-8">
   <title>${title} - ${period}</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     @page { size: ${style.pageSize} ${style.orientation}; margin: 0; }
     @media print {
@@ -175,7 +174,7 @@ export function generateFlowchartHTML(opts: GenerateFlowchartOptions): string {
       }
 
       const levelHtml = nodes
-        .map((node) => renderNodeBox(node, data.funnel, style, nodeGlobalIndex++))
+        .map((node) => renderNodeBox(node, data, style, nodeGlobalIndex++))
         .join('');
 
       nodesHtml += `<div class="fc-level">${levelHtml}</div>`;

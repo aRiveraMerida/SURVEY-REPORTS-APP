@@ -28,6 +28,7 @@ export interface Client {
   notes: string | null;
   contact_emails: string[];
   file_password: string | null;
+  email_subject_template: string | null;
   created_at: string;
   created_by: string;
 }
@@ -44,6 +45,8 @@ export interface Report {
   ai_analysis: AIAnalysis;
   report_html: string;
   report_data: ProcessedData;
+  source_file_path: string | null;
+  source_file_name: string | null;
   created_at: string;
   created_by: string;
 }

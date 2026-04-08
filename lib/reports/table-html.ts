@@ -1,10 +1,20 @@
-import type { ProcessedData, ReportStyle, AITableRow } from '@/types/database';
+import type { ProcessedData, ReportStyle, AITableRow, FunnelData } from '@/types/database';
 import { buildCoverCSS, buildCoverHTML, esc } from './charts-html';
 
 interface TableConfig {
   rows: AITableRow[];
 }
 import { resolveSource, resolvePercent } from '@/lib/processing/resolver';
+
+/** True when the funnel actually contains classified data. */
+function hasFunnel(funnel: FunnelData): boolean {
+  return (
+    funnel.contacted > 0 ||
+    funnel.informed.total > 0 ||
+    funnel.notContacted.total > 0 ||
+    funnel.contactedNotInformed.total > 0
+  );
+}
 
 interface GenerateTableOptions {
   title: string;
@@ -32,10 +42,11 @@ export function generateTableHTML(opts: GenerateTableOptions): string {
 
   const funnel = data.funnel;
 
-  // Resolve all row values
+  // Resolve all row values. Pass the full ProcessedData so rows can reference
+  // both funnel data and individual question data (question.<id>.*).
   const resolvedRows = tableConfig.rows.map((row) => {
-    const count = resolveSource(row.source, funnel);
-    const pct = resolvePercent(count, row.percentOf, funnel);
+    const count = resolveSource(row.source, data);
+    const pct = resolvePercent(count, row.percentOf, data);
     return { ...row, count, pct };
   });
 
@@ -65,7 +76,6 @@ export function generateTableHTML(opts: GenerateTableOptions): string {
 <head>
   <meta charset="utf-8">
   <title>${title} - ${period}</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     @page { size: ${style.pageSize} ${style.orientation}; margin: 0; }
     @media print {
@@ -161,9 +171,9 @@ export function generateTableHTML(opts: GenerateTableOptions): string {
       <span class="table-header-period">${esc(period.toUpperCase())}</span>
     </div>
 
-    <div class="summary-box">
+    ${hasFunnel(funnel) ? `<div class="summary-box">
       <div class="summary-item">
-        <div class="value">${funnel.total.toLocaleString('es-ES')}</div>
+        <div class="value">${(funnel.total || data.totalRows).toLocaleString('es-ES')}</div>
         <div class="label">Total registros</div>
       </div>
       <div class="summary-item">
@@ -174,7 +184,20 @@ export function generateTableHTML(opts: GenerateTableOptions): string {
         <div class="value">${funnel.informed.total.toLocaleString('es-ES')}</div>
         <div class="label">Informados</div>
       </div>
-    </div>
+    </div>` : `<div class="summary-box">
+      <div class="summary-item">
+        <div class="value">${data.totalRows.toLocaleString('es-ES')}</div>
+        <div class="label">Total registros</div>
+      </div>
+      <div class="summary-item">
+        <div class="value">${data.questions.length.toLocaleString('es-ES')}</div>
+        <div class="label">Preguntas analizadas</div>
+      </div>
+      <div class="summary-item">
+        <div class="value">${data.questions.reduce((sum, q) => sum + q.total, 0).toLocaleString('es-ES')}</div>
+        <div class="label">Respuestas totales</div>
+      </div>
+    </div>`}
 
     <table class="data-table">
       <thead>

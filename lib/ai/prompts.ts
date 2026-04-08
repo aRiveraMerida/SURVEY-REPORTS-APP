@@ -99,8 +99,13 @@ Devuelve ÚNICAMENTE un JSON válido (sin markdown, sin \`\`\`) con esta estruct
 1. **questions**: Sé exhaustivo. Incluye TODAS las columnas con datos categóricos relevantes. Usa "pie" para 2 opciones (SI/NO), "doughnut" para 3-5 opciones, "bar" para 6+ categorías, "horizontalBar" para textos largos.
 2. **filterColumn/filterValues**: Si una pregunta solo tiene sentido para un subconjunto de registros (ej: solo los que contestaron una encuesta), indica el filtro. Si no, omítelos para analizar todas las filas.
 3. **funnel**: Solo si los datos tienen una estructura jerárquica clara (ej: total → contactados → informados). Usa valores EXACTOS de las estadísticas. Si no hay funnel, devuelve null.
-4. **tableRows/flowchartPages**: Si funnel es null, genera tableRows con un resumen general de los datos y flowchartPages vacío ([]). Las rutas "source" válidas cuando hay funnel son: total, contacted, notContacted.total, contactedNotInformed.total, informed.total, notContacted.breakdown.VALOR, contactedNotInformed.breakdown.VALOR, informed.breakdown.VALOR.
-5. Responde SOLO con el JSON.`;
+4. **tableRows/flowchartPages**: SIEMPRE genera tablas y flujos con datos útiles, NUNCA devuelvas arrays vacíos.
+   - Rutas "source" válidas CON funnel: \`total\`, \`contacted\`, \`notContacted.total\`, \`contactedNotInformed.total\`, \`informed.total\`, \`notContacted.breakdown.VALOR\`, \`contactedNotInformed.breakdown.VALOR\`, \`informed.breakdown.VALOR\`.
+   - Rutas "source" válidas para datos por pregunta (usar el \`id\` de la pregunta definida en \`questions\`): \`question.<id>.total\`, \`question.<id>.breakdown.<VALOR_EXACTO>\`.
+   - **Sin funnel**: genera tableRows y flowchartPages basados en las preguntas usando las rutas \`question.<id>.*\`. Por ejemplo, una fila por pregunta (level 0) y sub-filas (level 1) con cada breakdown significativo.
+   - **Con funnel**: usa las rutas del funnel para la vista principal y añade secciones adicionales con preguntas si aportan valor.
+5. **flowchartPages**: una página por agrupación temática (o una por pregunta si no hay funnel). Cada página con al menos un nodo raíz (level 0) y sus hijos (level 1+).
+6. Responde SOLO con el JSON.`;
 }
 
 export const DEFAULT_STYLE = {
@@ -109,7 +114,10 @@ export const DEFAULT_STYLE = {
   accentColor: '#7AB317',
   backgroundColor: '#FFFFFF',
   headerGradient: ['#53860F', '#7AB317'] as [string, string],
-  fontFamily: "'Inter', sans-serif",
+  // System font stack. Inter is the app's preferred font but the generated
+  // report HTML is self-contained and rendered by serverless Puppeteer where
+  // downloading Google Fonts isn't reliable. Fall back to the system sans-serif.
+  fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
   questionNumberColor: '#53860F',
   chartColors: [
     '#53860F', '#7AB317', '#3B82F6', '#F59E0B', '#EF4444',

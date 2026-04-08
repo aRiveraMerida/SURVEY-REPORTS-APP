@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { deleteClientWithAssets, extractStoragePath } from '@/lib/db/clients';
 import { logAction } from '@/lib/db/access-logs';
 import { formatDate } from '@/lib/utils/formatting';
 import type { Client } from '@/types/database';
@@ -24,6 +25,7 @@ export default function HomePage() {
   const [contactEmails, setContactEmails] = useState<string[]>([]);
   const [newContactEmail, setNewContactEmail] = useState('');
   const [filePassword, setFilePassword] = useState('');
+  const [emailSubjectTemplate, setEmailSubjectTemplate] = useState('');
   const [saving, setSaving] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
 
@@ -35,19 +37,34 @@ export default function HomePage() {
 
   const loadClients = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('clients').select('*').order('name');
-    if (!data) { setLoading(false); return; }
+    // Single query with embedded reports. We only need created_at to
+    // derive both the count and the latest report date, so we project
+    // just that column from the nested relation. Supabase turns this
+    // into a single round-trip instead of N+1.
+    const { data, error } = await supabase
+      .from('clients')
+      .select('*, reports(created_at)')
+      .order('name');
 
-    const withStats: ClientWithStats[] = await Promise.all(
-      data.map(async (client) => {
-        const { count } = await supabase
-          .from('reports').select('*', { count: 'exact', head: true }).eq('client_id', client.id);
-        const { data: lastReport } = await supabase
-          .from('reports').select('created_at').eq('client_id', client.id)
-          .order('created_at', { ascending: false }).limit(1).maybeSingle();
-        return { ...client, report_count: count || 0, last_report_date: lastReport?.created_at || null };
-      })
-    );
+    if (error || !data) {
+      console.error('loadClients failed:', error?.message);
+      setLoading(false);
+      return;
+    }
+
+    type ClientRow = Client & { reports: { created_at: string }[] };
+    const withStats: ClientWithStats[] = (data as ClientRow[]).map((client) => {
+      const reports = client.reports || [];
+      const sorted = reports
+        .map((r) => r.created_at)
+        .sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+      return {
+        ...client,
+        report_count: reports.length,
+        last_report_date: sorted[0] || null,
+      };
+    });
+
     setClients(withStats);
     setLoading(false);
   }, [supabase]);
@@ -56,11 +73,13 @@ export default function HomePage() {
 
   const openCreate = () => {
     setEditingClient(null); setName(''); setNotes(''); setLogoFile(null); setLogoPreview(null);
-    setContactEmails([]); setNewContactEmail(''); setFilePassword(''); setShowModal(true);
+    setContactEmails([]); setNewContactEmail(''); setFilePassword('');
+    setEmailSubjectTemplate(''); setShowModal(true);
   };
   const openEdit = (c: Client) => {
     setEditingClient(c); setName(c.name); setNotes(c.notes || ''); setLogoFile(null); setLogoPreview(c.logo_url);
-    setContactEmails(c.contact_emails || []); setNewContactEmail(''); setFilePassword(c.file_password || ''); setShowModal(true);
+    setContactEmails(c.contact_emails || []); setNewContactEmail(''); setFilePassword(c.file_password || '');
+    setEmailSubjectTemplate(c.email_subject_template || ''); setShowModal(true);
   };
 
   const handleSave = async () => {
@@ -68,10 +87,29 @@ export default function HomePage() {
     setSaving(true);
     let logoUrl = editingClient?.logo_url || null;
     if (logoFile) {
-      const ext = logoFile.name.split('.').pop();
-      const fileName = `clients/${Date.now()}.${ext}`;
-      const { error } = await supabase.storage.from('logos').upload(fileName, logoFile, { upsert: true });
-      if (!error) { logoUrl = supabase.storage.from('logos').getPublicUrl(fileName).data.publicUrl; }
+      // Reject oversized images before uploading — logos get embedded as
+      // base64 in every report HTML, so keep them small.
+      if (logoFile.size > 2 * 1024 * 1024) {
+        alert('El logo no puede superar los 2 MB.');
+        setSaving(false);
+        return;
+      }
+      const rawExt = (logoFile.name.split('.').pop() || 'png').toLowerCase();
+      const ext = rawExt.replace(/[^a-z0-9]/g, '').slice(0, 8) || 'png';
+      const fileName = `clients/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+      const { error } = await supabase.storage.from('logos').upload(fileName, logoFile, { upsert: false });
+      if (error) {
+        alert('Error al subir el logo: ' + error.message);
+        setSaving(false);
+        return;
+      }
+      const newUrl = supabase.storage.from('logos').getPublicUrl(fileName).data.publicUrl;
+      // Best-effort: remove the previous logo file so we don't accumulate orphans
+      const oldPath = extractStoragePath(editingClient?.logo_url || null, 'logos');
+      if (oldPath) {
+        await supabase.storage.from('logos').remove([oldPath]).catch(() => {});
+      }
+      logoUrl = newUrl;
     }
     const clientData = {
       name: name.trim(),
@@ -79,6 +117,7 @@ export default function HomePage() {
       logo_url: logoUrl,
       contact_emails: contactEmails,
       file_password: filePassword.trim() || null,
+      email_subject_template: emailSubjectTemplate.trim() || null,
     };
     if (editingClient) {
       await supabase.from('clients').update(clientData).eq('id', editingClient.id);
@@ -91,8 +130,13 @@ export default function HomePage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('¿Eliminar este cliente y todos sus informes?')) return;
-    await supabase.from('clients').delete().eq('id', id);
+    if (!confirm('¿Eliminar este cliente y todos sus informes? Se eliminarán también los ficheros asociados en el almacenamiento.')) return;
+    try {
+      await deleteClientWithAssets(supabase, id);
+      logAction(supabase, 'client_deleted', '/');
+    } catch (err) {
+      alert('Error al eliminar: ' + (err instanceof Error ? err.message : 'desconocido'));
+    }
     loadClients();
   };
 
@@ -247,6 +291,25 @@ export default function HomePage() {
                 <input type="text" value={filePassword} onChange={(e) => setFilePassword(e.target.value)}
                   placeholder="Contraseña de encriptación"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono" />
+              </div>
+
+              {/* Email subject template */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Plantilla de asunto del email</label>
+                <p className="text-xs text-gray-400 mb-2">
+                  Personaliza el asunto. Placeholders disponibles:{' '}
+                  <code className="text-gray-600">{'{title}'}</code>,{' '}
+                  <code className="text-gray-600">{'{period}'}</code>,{' '}
+                  <code className="text-gray-600">{'{clientName}'}</code>.
+                  Por defecto: <em>Título — Periodo</em>.
+                </p>
+                <input
+                  type="text"
+                  value={emailSubjectTemplate}
+                  onChange={(e) => setEmailSubjectTemplate(e.target.value)}
+                  placeholder="Ej: Informe {title} - {period} ({clientName})"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">

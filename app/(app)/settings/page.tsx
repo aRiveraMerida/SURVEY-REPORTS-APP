@@ -146,22 +146,16 @@ export default function SettingsPage() {
     setKeyStatus(null);
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      // Proxy the verification through our server so we don't expose
+      // the key to the browser via the dangerous direct-browser-access
+      // header.
+      const response = await fetch('/api/verify-anthropic-key', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey.trim(),
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 10,
-          messages: [{ role: 'user', content: 'Hi' }],
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: apiKey.trim() }),
       });
-
-      setKeyStatus(response.ok ? 'valid' : 'invalid');
+      const result = await response.json();
+      setKeyStatus(result.valid ? 'valid' : 'invalid');
     } catch {
       setKeyStatus('invalid');
     }
@@ -514,22 +508,79 @@ export default function SettingsPage() {
               onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
+                // Reset input so selecting the same file twice re-triggers
+                e.target.value = '';
+
                 try {
                   const text = await file.text();
-                  const backup = JSON.parse(text);
-
-                  if (backup.clients) {
-                    for (const client of backup.clients) {
-                      await supabase.from('clients').upsert(client);
-                    }
-                  }
-                  if (backup.reports) {
-                    for (const report of backup.reports) {
-                      await supabase.from('reports').upsert(report);
-                    }
+                  let backup: unknown;
+                  try {
+                    backup = JSON.parse(text);
+                  } catch {
+                    setMessage({ type: 'error', text: 'El fichero no es un JSON válido.' });
+                    return;
                   }
 
-                  setMessage({ type: 'success', text: 'Datos importados correctamente' });
+                  // Schema validation — check shape before touching the DB
+                  if (!backup || typeof backup !== 'object') {
+                    setMessage({ type: 'error', text: 'El backup no es un objeto JSON.' });
+                    return;
+                  }
+                  const b = backup as { clients?: unknown; reports?: unknown; emitter_settings?: unknown };
+
+                  const clients = Array.isArray(b.clients) ? b.clients : [];
+                  const reports = Array.isArray(b.reports) ? b.reports : [];
+
+                  // Per-record shape check: each must have an id and look
+                  // like the right entity. Drop invalid entries and count
+                  // them so the user knows what will happen.
+                  type Row = { id?: unknown; name?: unknown; title?: unknown; client_id?: unknown };
+                  const validClients = (clients as Row[]).filter(
+                    (c) => c && typeof c.id === 'string' && typeof c.name === 'string'
+                  );
+                  const validReports = (reports as Row[]).filter(
+                    (r) => r && typeof r.id === 'string' && typeof r.title === 'string' && typeof r.client_id === 'string'
+                  );
+                  const droppedClients = clients.length - validClients.length;
+                  const droppedReports = reports.length - validReports.length;
+
+                  if (validClients.length === 0 && validReports.length === 0) {
+                    setMessage({ type: 'error', text: 'El backup no contiene clientes ni informes válidos.' });
+                    return;
+                  }
+
+                  // Preview + confirmation. upsert OVERWRITES existing rows
+                  // with matching id, so we make that explicit.
+                  const preview =
+                    `Vas a importar:\n` +
+                    `  • ${validClients.length} clientes\n` +
+                    `  • ${validReports.length} informes\n\n` +
+                    (droppedClients > 0 || droppedReports > 0
+                      ? `Se descartarán ${droppedClients} clientes y ${droppedReports} informes por esquema inválido.\n\n`
+                      : '') +
+                    `Los registros con el mismo id SOBRESCRIBIRÁN los existentes.\n\n¿Continuar?`;
+                  if (!confirm(preview)) return;
+
+                  // Upsert — sequential to surface the first DB error cleanly
+                  for (const client of validClients) {
+                    const { error } = await supabase.from('clients').upsert(client as object);
+                    if (error) {
+                      setMessage({ type: 'error', text: `Error importando cliente: ${error.message}` });
+                      return;
+                    }
+                  }
+                  for (const report of validReports) {
+                    const { error } = await supabase.from('reports').upsert(report as object);
+                    if (error) {
+                      setMessage({ type: 'error', text: `Error importando informe: ${error.message}` });
+                      return;
+                    }
+                  }
+
+                  setMessage({
+                    type: 'success',
+                    text: `Importados ${validClients.length} clientes y ${validReports.length} informes.`,
+                  });
                 } catch {
                   setMessage({ type: 'error', text: 'Error al importar. Verifica el formato del archivo.' });
                 }
