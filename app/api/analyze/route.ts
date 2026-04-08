@@ -28,18 +28,15 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { columnStats, totalRowCount } = body;
+    const { apiKey, columnStats, totalRowCount } = body;
 
-    // Prefer the server-side ANTHROPIC_API_KEY. Fall back to the
-    // browser-supplied key (legacy BYOK flow) so existing users keep
-    // working while the env var is being rolled out.
-    const serverKey = process.env.ANTHROPIC_API_KEY?.trim();
-    const clientKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
-    const apiKey = serverKey || clientKey;
-
-    if (!apiKey) {
+    // BYOK (bring-your-own-key): the Anthropic API key is supplied by
+    // the user from the browser (stored in localStorage, set via
+    // Settings) and forwarded on every request. Never stored
+    // server-side.
+    if (typeof apiKey !== 'string' || !apiKey.trim()) {
       return NextResponse.json(
-        { error: 'No hay API key de Anthropic configurada. Define ANTHROPIC_API_KEY en el servidor o introdúcela en Settings.' },
+        { error: 'API key requerida. Configúrala en Settings antes de continuar.' },
         { status: 400 }
       );
     }
@@ -53,7 +50,7 @@ export async function POST(request: NextRequest) {
 
     const prompt = buildAnalysisPrompt(columnStats, totalRowCount);
 
-    const client = new Anthropic({ apiKey });
+    const client = new Anthropic({ apiKey: apiKey.trim() });
 
     let message;
     try {

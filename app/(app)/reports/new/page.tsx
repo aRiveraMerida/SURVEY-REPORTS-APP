@@ -115,11 +115,12 @@ function NewReportContent() {
     setAnalysisError(null);
 
     try {
-      // Prefer the server-side ANTHROPIC_API_KEY. The localStorage key is
-      // the legacy BYOK fallback — if it exists we forward it, and the
-      // server decides which to use (server wins). If neither exists the
-      // server returns a clear error.
-      const clientKey = localStorage.getItem('claude_api_key') || '';
+      const apiKey = localStorage.getItem('claude_api_key');
+      if (!apiKey) {
+        setAnalysisError('Configura tu API key de Anthropic en Settings antes de continuar.');
+        setAnalyzing(false);
+        return;
+      }
 
       const headers = await getColumnHeaders(file);
       const columnStats = buildColumnStats(parsedData.rows, headers);
@@ -127,11 +128,7 @@ function NewReportContent() {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          apiKey: clientKey || undefined,
-          columnStats,
-          totalRowCount: parsedData.rowCount,
-        }),
+        body: JSON.stringify({ apiKey, columnStats, totalRowCount: parsedData.rowCount }),
       });
 
       const result = await res.json();
