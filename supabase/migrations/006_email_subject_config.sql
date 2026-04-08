@@ -1,0 +1,23 @@
+-- ============================================
+-- Declarative email subject configuration
+-- ============================================
+--
+-- Replaces the free-text `email_subject_template` with a
+-- structured JSONB config the client modal renders as a form:
+--
+--   {
+--     "prefix": "Informe",
+--     "includeTitle": true,
+--     "includePeriod": true,
+--     "includeClientName": false,
+--     "separator": " - ",
+--     "suffix": ""
+--   }
+--
+-- The old `email_subject_template` column is kept (nullable) for
+-- backwards compatibility with clients who typed templates before
+-- this migration. The server-side send-report endpoint reads
+-- `email_subject_config` first and only falls back to the template
+-- string if the config is null.
+
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS email_subject_config jsonb;

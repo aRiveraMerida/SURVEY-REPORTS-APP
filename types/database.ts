@@ -21,6 +21,23 @@ export interface EmitterSettings {
 // ============================================
 // Client (empresa destinataria del informe)
 // ============================================
+
+/**
+ * Declarative email subject configuration.
+ * The client modal renders this as a form (checkboxes + prefix/
+ * suffix/separator inputs) so users don't have to remember
+ * placeholder syntax.
+ */
+export interface EmailSubjectConfig {
+  prefix: string;
+  includeTitle: boolean;
+  includePeriod: boolean;
+  includeClientName: boolean;
+  /** Text used to join the parts (e.g. " - ", " | ", " · ", " "). */
+  separator: string;
+  suffix: string;
+}
+
 export interface Client {
   id: string;
   name: string;
@@ -28,7 +45,12 @@ export interface Client {
   notes: string | null;
   contact_emails: string[];
   file_password: string | null;
+  /** Legacy free-text template with {title}, {period}, {clientName}
+   *  placeholders. Kept for backwards compatibility with clients
+   *  configured before migration 006. New clients use
+   *  `email_subject_config` instead. */
   email_subject_template: string | null;
+  email_subject_config: EmailSubjectConfig | null;
   created_at: string;
   created_by: string;
 }

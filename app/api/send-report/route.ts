@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server';
 import nodemailer from 'nodemailer';
 import { generatePdf } from '@/lib/reports/pdf-generator';
 import { encryptFileWithZip } from '@/lib/reports/zip-encrypt';
+import { renderEmailSubject } from '@/lib/email/subject';
+import type { EmailSubjectConfig } from '@/types/database';
 
 // PDF generation + email send needs the serverless timeout raised
 // above the default 10s. 60s is the Hobby maximum.
@@ -12,25 +14,6 @@ export const runtime = 'nodejs';
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 const MAX_HTML_SIZE = 10 * 1024 * 1024;  // 10 MB
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-/**
- * Render an email subject using a template with placeholders:
- *   {title}, {period}, {clientName}
- * Falls back to "title — period" if template is missing.
- */
-function renderEmailSubject(
-  template: string | null | undefined,
-  vars: { title: string; period: string; clientName: string }
-): string {
-  const safe = (s: string) => s.replace(/[\r\n]/g, ' ').trim();
-  const fallback = `${safe(vars.title)} — ${safe(vars.period)}`;
-  if (!template || !template.trim()) return fallback;
-  const rendered = template
-    .replace(/\{title\}/g, safe(vars.title))
-    .replace(/\{period\}/g, safe(vars.period))
-    .replace(/\{clientName\}/g, safe(vars.clientName));
-  return rendered.replace(/[\r\n]/g, ' ').trim().substring(0, 200) || fallback;
-}
 
 interface SmtpConfig {
   host: string;
@@ -238,6 +221,10 @@ export async function POST(request: NextRequest) {
       const clientContactEmails: string[] = Array.isArray(client.contact_emails) ? client.contact_emails : [];
       const clientFilePassword: string | null = typeof client.file_password === 'string' ? client.file_password : null;
       const clientSubjectTemplate: string | null = typeof client.email_subject_template === 'string' ? client.email_subject_template : null;
+      const clientSubjectConfig: EmailSubjectConfig | null =
+        client.email_subject_config && typeof client.email_subject_config === 'object'
+          ? (client.email_subject_config as EmailSubjectConfig)
+          : null;
 
       // Use override emails if provided, otherwise fall back to client emails
       const emailSource = (body.overrideEmails && Array.isArray(body.overrideEmails) && body.overrideEmails.length > 0)
@@ -312,7 +299,7 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      const subject = renderEmailSubject(clientSubjectTemplate, {
+      const subject = renderEmailSubject(clientSubjectConfig, clientSubjectTemplate, {
         title: safeTitle,
         period: safePeriod,
         clientName,
