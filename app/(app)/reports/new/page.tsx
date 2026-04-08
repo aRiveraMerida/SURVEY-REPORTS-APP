@@ -63,7 +63,12 @@ function NewReportContent() {
   const selectedClient = clients.find((c) => c.id === selectedClientId);
 
   const loadClients = useCallback(async () => {
-    const { data } = await supabase.from('clients').select('*').order('name');
+    const { data, error } = await supabase.from('clients').select('*').order('name');
+    if (error) {
+      console.error('loadClients failed:', error.message);
+      setParseError(`Error cargando los clientes: ${error.message}`);
+      return;
+    }
     setClients(data || []);
   }, [supabase]);
 
@@ -193,8 +198,14 @@ function NewReportContent() {
       const style = DEFAULT_STYLE;
       const clientLogoBase64 = selectedClient.logo_url
         ? await imageUrlToBase64(selectedClient.logo_url) : null;
-      const { data: emitterData } = await supabase
+      // Emitter settings are optional — if the row doesn't exist yet or
+      // there's any error, fall back to no emitter logo instead of failing
+      // the whole report generation.
+      const { data: emitterData, error: emitterErr } = await supabase
         .from('emitter_settings').select('*').limit(1).single();
+      if (emitterErr && emitterErr.code !== 'PGRST116') {
+        console.warn('Failed to load emitter settings:', emitterErr.message);
+      }
       const emitterLogoBase64 = (emitterData as EmitterSettings | null)?.logo_url
         ? await imageUrlToBase64((emitterData as EmitterSettings).logo_url!) : null;
 
@@ -245,39 +256,93 @@ function NewReportContent() {
     setSaving(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-
-      // Upload the original source file to storage so it stays attached
-      // to the report and doesn't need to be re-uploaded on email send.
-      const ext = file.name.split('.').pop() || 'bin';
-      const storagePath = `${selectedClientId}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
-      const { error: uploadErr } = await supabase
-        .storage
-        .from('source-files')
-        .upload(storagePath, file, {
-          contentType: file.type || 'application/octet-stream',
-          upsert: false,
-        });
-      if (uploadErr) {
-        alert('Error al subir el fichero original: ' + uploadErr.message);
+      if (!user) {
+        alert('No hay sesión activa. Vuelve a iniciar sesión.');
         setSaving(false);
         return;
       }
 
-      const { error } = await supabase.from('reports').insert({
+      // Try to upload the original source file to storage so it stays
+      // attached to the report and doesn't need to be re-uploaded on
+      // email send. If the `source-files` bucket doesn't exist yet
+      // (migration 005 not applied) we fall back to saving the report
+      // in legacy mode — the user will be asked to attach the file
+      // manually when emailing.
+      let storagePath: string | null = null;
+      const safeExt = (file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8) || 'bin';
+      const attemptedPath = `${selectedClientId}/${Date.now()}-${crypto.randomUUID()}.${safeExt}`;
+      const { error: uploadErr } = await supabase
+        .storage
+        .from('source-files')
+        .upload(attemptedPath, file, {
+          contentType: file.type || 'application/octet-stream',
+          upsert: false,
+        });
+      if (uploadErr) {
+        // Bucket not found → migration 005 not applied. Warn and continue
+        // in legacy mode so the user can still save the report.
+        if (/bucket|not.*found/i.test(uploadErr.message)) {
+          console.warn('source-files bucket missing (migration 005?); saving report without persisted file.');
+        } else {
+          alert('Error al subir el fichero original: ' + uploadErr.message);
+          setSaving(false);
+          return;
+        }
+      } else {
+        storagePath = attemptedPath;
+      }
+
+      // Build the insert payload. If migration 005 isn't applied the
+      // `source_file_path` and `source_file_name` columns don't exist,
+      // so we retry without them on that specific error.
+      type ReportInsertPayload = {
+        client_id: string;
+        title: string;
+        period: string;
+        report_type: 'charts' | 'table' | 'flowchart';
+        ai_analysis: AIAnalysis;
+        report_html: string;
+        report_data: ProcessedData;
+        created_by: string;
+        source_file_path?: string;
+        source_file_name?: string;
+      };
+      const payload: ReportInsertPayload = {
         client_id: selectedClientId,
-        title, period,
+        title,
+        period,
         report_type: reportType,
         ai_analysis: analysis,
         report_html: reportHtml,
         report_data: processedData,
-        source_file_path: storagePath,
-        source_file_name: file.name,
-        created_by: user?.id,
-      });
-      if (error) {
-        // Roll back the uploaded file if the row insert failed
-        await supabase.storage.from('source-files').remove([storagePath]);
-        alert('Error al guardar: ' + error.message);
+        created_by: user.id,
+      };
+      if (storagePath) {
+        payload.source_file_path = storagePath;
+        payload.source_file_name = file.name;
+      }
+
+      let { error: insertErr } = await supabase.from('reports').insert(payload);
+
+      if (insertErr && /source_file_(path|name)/i.test(insertErr.message) && payload.source_file_path) {
+        // Migration 005 columns missing — retry in legacy mode without them
+        console.warn('reports.source_file_* columns missing; retrying in legacy mode.');
+        delete payload.source_file_path;
+        delete payload.source_file_name;
+        ({ error: insertErr } = await supabase.from('reports').insert(payload));
+        // Clean up the orphaned storage upload if we had done one
+        if (storagePath) {
+          await supabase.storage.from('source-files').remove([storagePath]).catch(() => {});
+        }
+      }
+
+      if (insertErr) {
+        // Roll back the uploaded file if the row insert failed for a
+        // non-schema reason
+        if (storagePath) {
+          await supabase.storage.from('source-files').remove([storagePath]).catch(() => {});
+        }
+        alert('Error al guardar: ' + insertErr.message);
       } else {
         logAction(supabase, 'report_created', '/reports/new');
         router.push(`/clients/${selectedClientId}`);

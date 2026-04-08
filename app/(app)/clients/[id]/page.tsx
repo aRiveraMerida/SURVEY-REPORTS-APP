@@ -13,18 +13,35 @@ export default function ClientDetailPage() {
   const [client, setClient] = useState<Client | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const supabase = createClient();
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data: clientData } = await supabase
+    setLoadError(null);
+
+    const { data: clientData, error: clientErr } = await supabase
       .from('clients').select('*').eq('id', id).single();
-    const { data: reportsData } = await supabase
+    if (clientErr) {
+      setLoadError(
+        clientErr.code === 'PGRST116'
+          ? 'Cliente no encontrado.'
+          : `Error cargando el cliente: ${clientErr.message}`
+      );
+      setLoading(false);
+      return;
+    }
+    setClient(clientData);
+
+    const { data: reportsData, error: reportsErr } = await supabase
       .from('reports').select('*').eq('client_id', id)
       .order('created_at', { ascending: false });
-
-    setClient(clientData);
+    if (reportsErr) {
+      setLoadError(`Error cargando los informes: ${reportsErr.message}`);
+      setLoading(false);
+      return;
+    }
     setReports(reportsData || []);
     setLoading(false);
   }, [id, supabase]);
@@ -50,6 +67,7 @@ export default function ClientDetailPage() {
   };
 
   if (loading) return <div className="text-center py-12 text-gray-400">Cargando...</div>;
+  if (loadError) return <div className="text-center py-12 text-red-600">{loadError}</div>;
   if (!client) return <div className="text-center py-12 text-gray-500">Cliente no encontrado</div>;
 
   return (

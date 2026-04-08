@@ -27,6 +27,7 @@ export default function HomePage() {
   const [filePassword, setFilePassword] = useState('');
   const [emailSubjectTemplate, setEmailSubjectTemplate] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
 
   const supabase = createClient();
@@ -74,32 +75,35 @@ export default function HomePage() {
   const openCreate = () => {
     setEditingClient(null); setName(''); setNotes(''); setLogoFile(null); setLogoPreview(null);
     setContactEmails([]); setNewContactEmail(''); setFilePassword('');
-    setEmailSubjectTemplate(''); setShowModal(true);
+    setEmailSubjectTemplate(''); setSaveError(null); setShowModal(true);
   };
   const openEdit = (c: Client) => {
     setEditingClient(c); setName(c.name); setNotes(c.notes || ''); setLogoFile(null); setLogoPreview(c.logo_url);
     setContactEmails(c.contact_emails || []); setNewContactEmail(''); setFilePassword(c.file_password || '');
-    setEmailSubjectTemplate(c.email_subject_template || ''); setShowModal(true);
+    setEmailSubjectTemplate(c.email_subject_template || ''); setSaveError(null); setShowModal(true);
   };
 
   const handleSave = async () => {
     if (!name.trim()) return;
     setSaving(true);
+    setSaveError(null);
+
     let logoUrl = editingClient?.logo_url || null;
+
     if (logoFile) {
       // Reject oversized images before uploading — logos get embedded as
       // base64 in every report HTML, so keep them small.
       if (logoFile.size > 2 * 1024 * 1024) {
-        alert('El logo no puede superar los 2 MB.');
+        setSaveError('El logo no puede superar los 2 MB.');
         setSaving(false);
         return;
       }
       const rawExt = (logoFile.name.split('.').pop() || 'png').toLowerCase();
       const ext = rawExt.replace(/[^a-z0-9]/g, '').slice(0, 8) || 'png';
       const fileName = `clients/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
-      const { error } = await supabase.storage.from('logos').upload(fileName, logoFile, { upsert: false });
-      if (error) {
-        alert('Error al subir el logo: ' + error.message);
+      const { error: uploadErr } = await supabase.storage.from('logos').upload(fileName, logoFile, { upsert: false });
+      if (uploadErr) {
+        setSaveError('Error al subir el logo: ' + uploadErr.message);
         setSaving(false);
         return;
       }
@@ -111,7 +115,20 @@ export default function HomePage() {
       }
       logoUrl = newUrl;
     }
-    const clientData = {
+
+    // Build the payload. `email_subject_template` was added in migration
+    // 005; if that migration hasn't been applied to this Supabase project
+    // the insert/update will fail with "column does not exist". We catch
+    // that specific case below and retry without the field.
+    type ClientWritePayload = {
+      name: string;
+      notes: string | null;
+      logo_url: string | null;
+      contact_emails: string[];
+      file_password: string | null;
+      email_subject_template?: string | null;
+    };
+    const clientData: ClientWritePayload = {
       name: name.trim(),
       notes: notes.trim() || null,
       logo_url: logoUrl,
@@ -119,14 +136,71 @@ export default function HomePage() {
       file_password: filePassword.trim() || null,
       email_subject_template: emailSubjectTemplate.trim() || null,
     };
-    if (editingClient) {
-      await supabase.from('clients').update(clientData).eq('id', editingClient.id);
-    } else {
-      const { data: { user } } = await supabase.auth.getUser();
-      await supabase.from('clients').insert({ ...clientData, created_by: user?.id });
-      logAction(supabase, 'client_created', '/');
+
+    // Helper that performs the DB write with graceful fallback when a
+    // column is missing. Returns `null` on success or the error message
+    // on failure so the caller can surface it.
+    const writeClient = async (): Promise<string | null> => {
+      if (editingClient) {
+        const { error } = await supabase
+          .from('clients')
+          .update(clientData)
+          .eq('id', editingClient.id);
+        if (!error) return null;
+        // Retry without email_subject_template if migration 005 missing
+        if (/email_subject_template/i.test(error.message) && 'email_subject_template' in clientData) {
+          const { email_subject_template: _discard, ...legacy } = clientData;
+          void _discard;
+          const { error: retryErr } = await supabase
+            .from('clients')
+            .update(legacy)
+            .eq('id', editingClient.id);
+          if (!retryErr) {
+            console.warn('Saved client without email_subject_template — apply migration 005 to enable.');
+            return null;
+          }
+          return retryErr.message;
+        }
+        return error.message;
+      } else {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return 'No hay sesión activa. Vuelve a iniciar sesión.';
+        const { error } = await supabase
+          .from('clients')
+          .insert({ ...clientData, created_by: user.id });
+        if (!error) {
+          logAction(supabase, 'client_created', '/');
+          return null;
+        }
+        // Retry without email_subject_template if migration 005 missing
+        if (/email_subject_template/i.test(error.message) && 'email_subject_template' in clientData) {
+          const { email_subject_template: _discard, ...legacy } = clientData;
+          void _discard;
+          const { error: retryErr } = await supabase
+            .from('clients')
+            .insert({ ...legacy, created_by: user.id });
+          if (!retryErr) {
+            console.warn('Saved client without email_subject_template — apply migration 005 to enable.');
+            logAction(supabase, 'client_created', '/');
+            return null;
+          }
+          return retryErr.message;
+        }
+        return error.message;
+      }
+    };
+
+    const errMsg = await writeClient();
+
+    if (errMsg) {
+      setSaveError(`Error al guardar el cliente: ${errMsg}`);
+      setSaving(false);
+      return;
     }
-    setSaving(false); setShowModal(false); loadClients();
+
+    setSaving(false);
+    setShowModal(false);
+    loadClients();
   };
 
   const handleDelete = async (id: string) => {
@@ -312,6 +386,11 @@ export default function HomePage() {
                 />
               </div>
             </div>
+            {saveError && (
+              <div className="mt-4 p-3 rounded-lg text-sm bg-red-50 text-red-700 border border-red-200">
+                {saveError}
+              </div>
+            )}
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
               <button onClick={handleSave} disabled={!name.trim() || saving}

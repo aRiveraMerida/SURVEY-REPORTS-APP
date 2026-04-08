@@ -13,6 +13,7 @@ export default function ReportViewPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [client, setClient] = useState<Client | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
 
   // Email sending state
@@ -28,26 +29,43 @@ export default function ReportViewPage() {
   const supabase = createClient();
 
   useEffect(() => {
-    supabase
-      .from('reports')
-      .select('*')
-      .eq('id', id)
-      .single()
-      .then(async ({ data }) => {
-        setReport(data);
-        if (data?.client_id) {
-          const { data: clientData } = await supabase
-            .from('clients')
-            .select('*')
-            .eq('id', data.client_id)
-            .single();
-          setClient(clientData);
-        }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('reports')
+        .select('*')
+        .eq('id', id)
+        .single();
+      if (cancelled) return;
+      if (error) {
+        setLoadError(
+          error.code === 'PGRST116'
+            ? 'Informe no encontrado.'
+            : `Error cargando el informe: ${error.message}`
+        );
         setLoading(false);
-      });
+        return;
+      }
+      setReport(data);
+      if (data?.client_id) {
+        const { data: clientData, error: clientErr } = await supabase
+          .from('clients')
+          .select('*')
+          .eq('id', data.client_id)
+          .single();
+        if (cancelled) return;
+        if (clientErr && clientErr.code !== 'PGRST116') {
+          console.warn('Failed to load client:', clientErr.message);
+        }
+        setClient(clientData);
+      }
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
   }, [id, supabase]);
 
   if (loading) return <div className="text-center py-12 text-gray-400">Cargando informe...</div>;
+  if (loadError) return <div className="text-center py-12 text-red-600">{loadError}</div>;
   if (!report) return <div className="text-center py-12 text-gray-500">Informe no encontrado</div>;
 
   const handlePrint = async () => {
