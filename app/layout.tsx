@@ -30,6 +30,7 @@ export default function RootLayout({
           and serving as a static asset bypasses Next's CSS pipeline
           entirely.
         */}
+        {/* eslint-disable-next-line @next/next/no-css-tags */}
         <link rel="stylesheet" href="/tailwind.css" />
       </head>
       <body className={`${inter.variable} font-sans antialiased bg-gray-50 text-gray-900`}>
