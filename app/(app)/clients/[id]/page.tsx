@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { deleteReportWithAssets } from '@/lib/db/reports';
 import { formatDate, reportTypeBadge } from '@/lib/utils/formatting';
 import type { Client, Report } from '@/types/database';
 
@@ -31,8 +32,12 @@ export default function ClientDetailPage() {
   useEffect(() => { load(); }, [load]);
 
   const handleDeleteReport = async (reportId: string) => {
-    if (!confirm('¿Eliminar este informe?')) return;
-    await supabase.from('reports').delete().eq('id', reportId);
+    if (!confirm('¿Eliminar este informe? Se eliminará también el fichero original asociado.')) return;
+    try {
+      await deleteReportWithAssets(supabase, reportId);
+    } catch (err) {
+      alert('Error al eliminar: ' + (err instanceof Error ? err.message : 'desconocido'));
+    }
     load();
   };
 

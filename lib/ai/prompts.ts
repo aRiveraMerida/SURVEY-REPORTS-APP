@@ -114,7 +114,10 @@ export const DEFAULT_STYLE = {
   accentColor: '#7AB317',
   backgroundColor: '#FFFFFF',
   headerGradient: ['#53860F', '#7AB317'] as [string, string],
-  fontFamily: "'Inter', sans-serif",
+  // System font stack. Inter is the app's preferred font but the generated
+  // report HTML is self-contained and rendered by serverless Puppeteer where
+  // downloading Google Fonts isn't reliable. Fall back to the system sans-serif.
+  fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
   questionNumberColor: '#53860F',
   chartColors: [
     '#53860F', '#7AB317', '#3B82F6', '#F59E0B', '#EF4444',

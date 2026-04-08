@@ -1,12 +1,16 @@
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 
+export const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
+export const MAX_ROWS = 200_000;
+
 export interface ParsedData {
   rows: Record<string, string>[];
   headers: string[];
   sheetNames: string[];
   columnCount: number;
   rowCount: number;
+  truncated: boolean;
 }
 
 /**
@@ -35,12 +39,20 @@ export function indexToColumnLetter(index: number): string {
 }
 
 /**
- * Parse an Excel file (.xlsx, .xls) or CSV file
+ * Parse an Excel file (.xlsx, .xls) or CSV file.
+ * Throws if the file exceeds MAX_FILE_SIZE_BYTES.
+ * Truncates to MAX_ROWS rows, setting `truncated: true` in the result.
  */
 export async function parseFile(
   file: File,
   sheetName?: string | null
 ): Promise<ParsedData> {
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    const mb = (file.size / 1024 / 1024).toFixed(1);
+    const limitMb = (MAX_FILE_SIZE_BYTES / 1024 / 1024).toFixed(0);
+    throw new Error(`El fichero pesa ${mb} MB, máximo permitido ${limitMb} MB.`);
+  }
+
   const ext = file.name.split('.').pop()?.toLowerCase();
 
   if (ext === 'csv') {
@@ -62,7 +74,7 @@ async function parseExcel(file: File, sheetName?: string | null): Promise<Parsed
   const jsonData = XLSX.utils.sheet_to_json<string[]>(worksheet, { header: 1, defval: '' });
 
   if (jsonData.length === 0) {
-    return { rows: [], headers: [], sheetNames, columnCount: 0, rowCount: 0 };
+    return { rows: [], headers: [], sheetNames, columnCount: 0, rowCount: 0, truncated: false };
   }
 
   // First row as headers
@@ -74,9 +86,14 @@ async function parseExcel(file: File, sheetName?: string | null): Promise<Parsed
     headers.push(indexToColumnLetter(i));
   }
 
+  // Truncate to MAX_ROWS to prevent OOM on huge datasets
+  const totalDataRows = jsonData.length - 1;
+  const effectiveEnd = Math.min(jsonData.length, 1 + MAX_ROWS);
+  const truncated = totalDataRows > MAX_ROWS;
+
   // Convert to keyed rows (using column letters as keys)
   const rows: Record<string, string>[] = [];
-  for (let i = 1; i < jsonData.length; i++) {
+  for (let i = 1; i < effectiveEnd; i++) {
     const row: Record<string, string> = {};
     const rowData = jsonData[i] as string[];
     for (let j = 0; j < maxCols; j++) {
@@ -94,6 +111,7 @@ async function parseExcel(file: File, sheetName?: string | null): Promise<Parsed
     sheetNames,
     columnCount: maxCols,
     rowCount: rows.length,
+    truncated,
   };
 }
 
@@ -103,7 +121,7 @@ async function parseCSV(file: File): Promise<ParsedData> {
       complete(results) {
         const data = results.data as string[][];
         if (data.length === 0) {
-          resolve({ rows: [], headers: [], sheetNames: ['CSV'], columnCount: 0, rowCount: 0 });
+          resolve({ rows: [], headers: [], sheetNames: ['CSV'], columnCount: 0, rowCount: 0, truncated: false });
           return;
         }
 
@@ -113,8 +131,12 @@ async function parseCSV(file: File): Promise<ParsedData> {
           headers.push(indexToColumnLetter(i));
         }
 
+        const totalDataRows = data.length - 1;
+        const effectiveEnd = Math.min(data.length, 1 + MAX_ROWS);
+        const truncated = totalDataRows > MAX_ROWS;
+
         const rows: Record<string, string>[] = [];
-        for (let i = 1; i < data.length; i++) {
+        for (let i = 1; i < effectiveEnd; i++) {
           const row: Record<string, string> = {};
           for (let j = 0; j < maxCols; j++) {
             row[indexToColumnLetter(j)] = String(data[i][j] ?? '');
@@ -129,6 +151,7 @@ async function parseCSV(file: File): Promise<ParsedData> {
           sheetNames: ['CSV'],
           columnCount: maxCols,
           rowCount: rows.length,
+          truncated,
         });
       },
       error(err) {

@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import nodemailer from 'nodemailer';
-import { execFileSync } from 'child_process';
-import { writeFileSync, readFileSync, mkdirSync, rmSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
-import { randomUUID } from 'crypto';
 import { generatePdf } from '@/lib/reports/pdf-generator';
+import { encryptFileWithZip } from '@/lib/reports/zip-encrypt';
 
 // PDF generation + email send needs the serverless timeout raised
 // above the default 10s. 60s is the Hobby maximum.
@@ -77,32 +73,6 @@ function sanitizeFileName(name: string): string {
   return name
     .replace(/[^a-zA-Z0-9._\-\s()áéíóúñÁÉÍÓÚÑ]/g, '_')
     .substring(0, 200);
-}
-
-function encryptFileWithZip(
-  fileBuffer: Buffer,
-  fileName: string,
-  password: string
-): Buffer {
-  const tmpDir = join(tmpdir(), `report-${randomUUID()}`);
-  mkdirSync(tmpDir, { recursive: true });
-
-  try {
-    const safeName = sanitizeFileName(fileName);
-    const inputPath = join(tmpDir, safeName);
-    const zipPath = join(tmpDir, 'encrypted.zip');
-
-    writeFileSync(inputPath, fileBuffer);
-
-    // Use execFileSync with argument array to prevent command injection
-    execFileSync('zip', ['-j', '-P', password, zipPath, inputPath], {
-      timeout: 30000,
-    });
-
-    return readFileSync(zipPath);
-  } finally {
-    rmSync(tmpDir, { recursive: true, force: true });
-  }
 }
 
 export async function POST(request: NextRequest) {
@@ -278,10 +248,15 @@ export async function POST(request: NextRequest) {
         contentType: 'application/pdf',
       });
 
-      // Original file: encrypt with ZIP if password configured, otherwise attach as-is
+      // Original file: encrypt with AES-256 ZIP if password configured,
+      // otherwise attach as-is.
       if (client.file_password && client.file_password.trim()) {
         try {
-          const zipBuffer = encryptFileWithZip(sourceBuffer, sourceFileName, client.file_password.trim());
+          const zipBuffer = await encryptFileWithZip(
+            sourceBuffer,
+            sanitizeFileName(sourceFileName),
+            client.file_password.trim()
+          );
           const safeOrigName = sanitizeFileName(sourceFileName.replace(/\.[^.]+$/, ''));
           attachments.push({
             filename: `${safeOrigName}.zip`,
@@ -290,8 +265,9 @@ export async function POST(request: NextRequest) {
           });
         } catch (encErr) {
           console.error('ZIP encryption failed:', encErr);
+          const msg = encErr instanceof Error ? encErr.message : 'error desconocido';
           return NextResponse.json(
-            { error: 'No se pudo encriptar el fichero adjunto con la contraseña del cliente. Revisa que la utilidad zip esté disponible en el servidor.' },
+            { error: `No se pudo encriptar el fichero adjunto con la contraseña del cliente: ${msg}` },
             { status: 500 }
           );
         }

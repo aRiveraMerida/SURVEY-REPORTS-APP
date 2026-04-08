@@ -1,6 +1,32 @@
 import * as XLSX from 'xlsx';
 import type { ProcessedData } from '@/types/database';
 
+// Max individual sheets per export to keep the workbook usable.
+const MAX_INDIVIDUAL_SHEETS = 30;
+
+/**
+ * Detect whether the frequency keys of a question look like short dates
+ * (dd/mm/yyyy). If so we preserve the insertion order (which the processor
+ * already sets chronologically) instead of re-sorting by count.
+ */
+function looksLikeDateKeys(keys: string[]): boolean {
+  if (keys.length === 0) return false;
+  const dateRe = /^\d{2}\/\d{2}\/\d{4}$/;
+  const matches = keys.filter((k) => dateRe.test(k)).length;
+  return matches / keys.length >= 0.8;
+}
+
+function orderedEntries(frequencies: Record<string, number>): [string, number][] {
+  const keys = Object.keys(frequencies);
+  const entries = Object.entries(frequencies);
+  if (looksLikeDateKeys(keys)) {
+    // Preserve chronological order set by the processor
+    return entries;
+  }
+  // Default: sort by count desc
+  return entries.sort((a, b) => b[1] - a[1]);
+}
+
 /**
  * Sanitize a string for use as an Excel sheet name.
  * Removes forbidden characters: : \ / ? * [ ]
@@ -11,15 +37,20 @@ function sanitizeSheetName(name: string, existing: string[]): string {
   if (!clean) clean = 'Hoja';
   clean = clean.length > 31 ? clean.slice(0, 28) + '...' : clean;
 
-  // Ensure uniqueness
+  // Ensure uniqueness — bounded loop to prevent pathological cases
   let final = clean;
   let counter = 2;
-  while (existing.includes(final)) {
+  const MAX_ATTEMPTS = 999;
+  while (existing.includes(final) && counter <= MAX_ATTEMPTS) {
     const suffix = ` (${counter})`;
     final = clean.length + suffix.length > 31
       ? clean.slice(0, 31 - suffix.length) + suffix
       : clean + suffix;
     counter++;
+  }
+  if (existing.includes(final)) {
+    // Fall back to a timestamped name rather than looping forever
+    final = `Hoja-${Date.now().toString(36)}`.slice(0, 31);
   }
   return final;
 }
@@ -104,7 +135,7 @@ export function exportToExcel(
       'Total respuestas': q.total,
     });
 
-    const entries = Object.entries(q.frequencies).sort((a, b) => b[1] - a[1]);
+    const entries = orderedEntries(q.frequencies);
     for (const [label, count] of entries) {
       questionsRows.push({
         Pregunta: '',
@@ -123,11 +154,12 @@ export function exportToExcel(
   questionsSheet['!cols'] = [{ wch: 40 }, { wch: 30 }, { wch: 12 }, { wch: 12 }, { wch: 16 }];
   XLSX.utils.book_append_sheet(wb, questionsSheet, 'Datos');
 
-  // Individual sheets per question
+  // Individual sheets per question — capped to avoid unwieldy workbooks.
+  // When capped, the full dataset remains available in the "Datos" sheet.
   const usedNames = ['Resumen', 'Datos'];
-  for (const q of validQuestions) {
-    const rows = Object.entries(q.frequencies)
-      .sort((a, b) => b[1] - a[1])
+  const questionsForSheets = validQuestions.slice(0, MAX_INDIVIDUAL_SHEETS);
+  for (const q of questionsForSheets) {
+    const rows = orderedEntries(q.frequencies)
       .map(([label, count]) => ({
         Respuesta: label,
         Cantidad: count,

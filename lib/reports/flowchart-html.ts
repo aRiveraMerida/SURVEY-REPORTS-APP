@@ -54,7 +54,6 @@ export function generateFlowchartHTML(opts: GenerateFlowchartOptions): string {
 <head>
   <meta charset="utf-8">
   <title>${title} - ${period}</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     @page { size: ${style.pageSize} ${style.orientation}; margin: 0; }
     @media print {

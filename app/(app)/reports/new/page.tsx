@@ -4,7 +4,7 @@ import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
-import { parseFile, getColumnHeaders, type ParsedData } from '@/lib/processing/parser';
+import { parseFile, getColumnHeaders, MAX_FILE_SIZE_BYTES, MAX_ROWS, type ParsedData } from '@/lib/processing/parser';
 import { buildColumnStats } from '@/lib/processing/stats';
 import { processDataset } from '@/lib/processing/processor';
 import {
@@ -77,14 +77,34 @@ function NewReportContent() {
   }, [selectedClient, title]);
 
   const handleFileUpload = async (f: File) => {
-    setFile(f);
     setParseError(null);
     setAnalysis(null);
+    setParsedData(null);
+
+    // Pre-flight: size guard. Matches the server-side /api/send-report
+    // limit (25 MB) so users don't discover the cap only at send time.
+    if (f.size > MAX_FILE_SIZE_BYTES) {
+      const mb = (f.size / 1024 / 1024).toFixed(1);
+      const limitMb = (MAX_FILE_SIZE_BYTES / 1024 / 1024).toFixed(0);
+      setParseError(`El fichero pesa ${mb} MB. Máximo permitido: ${limitMb} MB.`);
+      setFile(null);
+      return;
+    }
+
+    setFile(f);
     try {
       const parsed = await parseFile(f);
+      if (parsed.truncated) {
+        setParseError(
+          `El fichero tiene más de ${MAX_ROWS.toLocaleString('es-ES')} filas y ha sido truncado. ` +
+          `El análisis solo verá las primeras ${parsed.rowCount.toLocaleString('es-ES')} filas.`
+        );
+      }
       setParsedData(parsed);
-    } catch {
-      setParseError('Error al parsear el fichero. Verifica el formato.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Error al parsear el fichero. Verifica el formato.';
+      setParseError(msg);
+      setFile(null);
     }
   };
 
@@ -95,12 +115,11 @@ function NewReportContent() {
     setAnalysisError(null);
 
     try {
-      const apiKey = localStorage.getItem('claude_api_key');
-      if (!apiKey) {
-        setAnalysisError('Configura tu API key de Anthropic en Settings antes de continuar.');
-        setAnalyzing(false);
-        return;
-      }
+      // Prefer the server-side ANTHROPIC_API_KEY. The localStorage key is
+      // the legacy BYOK fallback — if it exists we forward it, and the
+      // server decides which to use (server wins). If neither exists the
+      // server returns a clear error.
+      const clientKey = localStorage.getItem('claude_api_key') || '';
 
       const headers = await getColumnHeaders(file);
       const columnStats = buildColumnStats(parsedData.rows, headers);
@@ -108,7 +127,11 @@ function NewReportContent() {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey, columnStats, totalRowCount: parsedData.rowCount }),
+        body: JSON.stringify({
+          apiKey: clientKey || undefined,
+          columnStats,
+          totalRowCount: parsedData.rowCount,
+        }),
       });
 
       const result = await res.json();
