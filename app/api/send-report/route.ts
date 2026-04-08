@@ -132,15 +132,29 @@ export async function POST(request: NextRequest) {
       let originalFileName: string | null = null;
 
       if (reportId && typeof reportId === 'string') {
-        const { data: reportRow } = await supabase
+        // SELECT * so the query doesn't blow up if migration 005 hasn't
+        // been applied yet (source_file_path / source_file_name may not
+        // exist). We validate presence below.
+        const { data: reportRow, error: reportErr } = await supabase
           .from('reports')
-          .select('source_file_path, source_file_name')
+          .select('*')
           .eq('id', reportId)
           .single();
 
-        if (!reportRow?.source_file_path || !reportRow?.source_file_name) {
+        if (reportErr) {
+          console.error('Report lookup failed:', reportErr);
           return NextResponse.json(
-            { error: 'Este informe no tiene fichero original asociado. Regenéralo desde el asistente.' },
+            { error: `Error consultando el informe: ${reportErr.message}` },
+            { status: 500 }
+          );
+        }
+
+        const sourcePath: string | null = typeof reportRow?.source_file_path === 'string' ? reportRow.source_file_path : null;
+        const sourceName: string | null = typeof reportRow?.source_file_name === 'string' ? reportRow.source_file_name : null;
+
+        if (!sourcePath || !sourceName) {
+          return NextResponse.json(
+            { error: 'Este informe no tiene fichero original asociado. Adjunta el Excel/CSV manualmente o regenéralo desde el asistente.' },
             { status: 400 }
           );
         }
@@ -148,7 +162,7 @@ export async function POST(request: NextRequest) {
         const { data: fileData, error: dlErr } = await supabase
           .storage
           .from('source-files')
-          .download(reportRow.source_file_path);
+          .download(sourcePath);
 
         if (dlErr || !fileData) {
           return NextResponse.json(
@@ -158,7 +172,7 @@ export async function POST(request: NextRequest) {
         }
 
         originalBuffer = Buffer.from(await fileData.arrayBuffer());
-        originalFileName = reportRow.source_file_name;
+        originalFileName = sourceName;
       } else if (body.originalFileBase64 && body.originalFileName) {
         if (typeof body.originalFileName !== 'string' || body.originalFileName.length > 255) {
           return NextResponse.json({ error: 'Nombre de archivo demasiado largo.' }, { status: 400 });
@@ -195,21 +209,40 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Get client config
-      const { data: client } = await supabase
+      // Get client config. Use SELECT * so a missing optional column
+      // (e.g. email_subject_template before migration 005 is applied)
+      // doesn't break the whole request — we read fields defensively
+      // below.
+      const { data: client, error: clientErr } = await supabase
         .from('clients')
-        .select('name, contact_emails, file_password, email_subject_template')
+        .select('*')
         .eq('id', clientId)
         .single();
 
-      if (!client) {
+      if (clientErr || !client) {
+        // Distinguish "not found" (PGRST116) from other Supabase errors
+        // so we don't lie to the user with a generic 404.
+        if (clientErr && clientErr.code !== 'PGRST116') {
+          console.error('Client lookup failed:', clientErr);
+          return NextResponse.json(
+            { error: `Error consultando el cliente: ${clientErr.message}` },
+            { status: 500 }
+          );
+        }
         return NextResponse.json({ error: 'Cliente no encontrado.' }, { status: 404 });
       }
+
+      // Read client fields defensively — columns added by later migrations
+      // may not exist yet on older Supabase projects.
+      const clientName: string = typeof client.name === 'string' ? client.name : '';
+      const clientContactEmails: string[] = Array.isArray(client.contact_emails) ? client.contact_emails : [];
+      const clientFilePassword: string | null = typeof client.file_password === 'string' ? client.file_password : null;
+      const clientSubjectTemplate: string | null = typeof client.email_subject_template === 'string' ? client.email_subject_template : null;
 
       // Use override emails if provided, otherwise fall back to client emails
       const emailSource = (body.overrideEmails && Array.isArray(body.overrideEmails) && body.overrideEmails.length > 0)
         ? body.overrideEmails
-        : (client.contact_emails || []);
+        : clientContactEmails;
 
       const validEmails = emailSource.filter(
         (email: string) => typeof email === 'string' && EMAIL_REGEX.test(email)
@@ -250,12 +283,13 @@ export async function POST(request: NextRequest) {
 
       // Original file: encrypt with AES-256 ZIP if password configured,
       // otherwise attach as-is.
-      if (client.file_password && client.file_password.trim()) {
+      const trimmedPassword = clientFilePassword ? clientFilePassword.trim() : '';
+      if (trimmedPassword) {
         try {
           const zipBuffer = await encryptFileWithZip(
             sourceBuffer,
             sanitizeFileName(sourceFileName),
-            client.file_password.trim()
+            trimmedPassword
           );
           const safeOrigName = sanitizeFileName(sourceFileName.replace(/\.[^.]+$/, ''));
           attachments.push({
@@ -278,10 +312,10 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      const subject = renderEmailSubject(client.email_subject_template, {
+      const subject = renderEmailSubject(clientSubjectTemplate, {
         title: safeTitle,
         period: safePeriod,
-        clientName: client.name || '',
+        clientName,
       });
 
       // Send email
@@ -296,9 +330,9 @@ export async function POST(request: NextRequest) {
               <h2 style="color:#53860F;margin-bottom:8px;">${safeTitle}</h2>
               <p style="color:#666;margin-bottom:20px;">Periodo: <strong>${safePeriod}</strong></p>
               <p style="color:#333;line-height:1.6;">
-                Adjunto encontrará el informe generado en formato PDF${client.file_password ? ' y el archivo de datos original en un ZIP protegido con contraseña' : ' y el archivo de datos original'}.
+                Adjunto encontrará el informe generado en formato PDF${trimmedPassword ? ' y el archivo de datos original en un ZIP protegido con contraseña' : ' y el archivo de datos original'}.
               </p>
-              ${client.file_password ? '<p style="color:#888;font-size:13px;margin-top:16px;">El archivo ZIP está protegido con la contraseña que le fue comunicada previamente.</p>' : ''}
+              ${trimmedPassword ? '<p style="color:#888;font-size:13px;margin-top:16px;">El archivo ZIP está protegido con la contraseña que le fue comunicada previamente.</p>' : ''}
               <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
               <p style="color:#aaa;font-size:12px;">Este email ha sido enviado automáticamente.</p>
             </div>
