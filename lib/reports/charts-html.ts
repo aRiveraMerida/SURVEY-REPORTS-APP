@@ -228,7 +228,10 @@ export function generateChartsHTML(opts: GenerateOptions): string {
       border-bottom: 2px solid ${style.primaryColor}18;
     }
     .legend-item {
-      display: flex; align-items: center; gap: 10px;
+      /* Align items to the top so the colour dot stays level with the
+         first line of the label when a long label wraps across several
+         lines. */
+      display: flex; align-items: flex-start; gap: 10px;
       margin-bottom: 4px; font-size: 12px;
       padding: 5px 8px;
       border-radius: 6px;
@@ -239,18 +242,33 @@ export function generateChartsHTML(opts: GenerateOptions): string {
     .legend-color {
       width: 12px; height: 12px; border-radius: 4px; flex-shrink: 0;
       box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+      /* Nudge the dot down half a line so it visually centres on the
+         first line of the label. */
+      margin-top: 3px;
     }
     .legend-text {
       color: #444; font-weight: 500; flex: 1;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       font-size: 11.5px;
+      line-height: 1.35;
+      /* Allow long labels to wrap onto multiple lines instead of being
+         truncated with an ellipsis. Very long unbroken strings (URLs,
+         hashes) still break so they don't overflow horizontally. */
+      white-space: normal;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      min-width: 0;
     }
     .legend-count {
       color: #666; font-weight: 700; font-size: 11px; white-space: nowrap;
       background: rgba(0,0,0,0.04); padding: 2px 8px; border-radius: 10px;
+      /* Same top nudge as the colour dot so the pill sits on the first
+         line of the wrapped label. */
+      margin-top: 2px;
+      flex-shrink: 0;
+      align-self: flex-start;
     }
     .legend-bar {
-      display: flex; align-items: center; gap: 10px;
+      display: flex; align-items: flex-start; gap: 10px;
       flex-wrap: wrap; justify-content: center;
       background: linear-gradient(180deg, #fafcf8 0%, #f5f7f0 100%);
       border-radius: 14px;
@@ -258,7 +276,14 @@ export function generateChartsHTML(opts: GenerateOptions): string {
       border: 1px solid #e8eddc;
       box-shadow: 0 2px 8px rgba(0,0,0,0.03);
     }
-    .legend-bar .legend-item { margin-bottom: 0; background: transparent; }
+    .legend-bar .legend-item {
+      margin-bottom: 0;
+      background: transparent;
+      /* Cap the width of each chip so long labels wrap inside the chip
+         instead of making the chip stretch and push neighbours out of
+         the row. */
+      max-width: 220px;
+    }
     /* ---- FOOTER ---- */
     .page-footer {
       display: flex; justify-content: space-between; align-items: center;

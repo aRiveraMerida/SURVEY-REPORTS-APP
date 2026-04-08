@@ -242,3 +242,76 @@ describe('generatePdf — full report pipeline (NO funnel, synthesizer fallback)
     assertValidPdf(pdf, 10_000);
   });
 });
+
+describe('charts HTML — legend wrapping (regression)', () => {
+  // Regression test for the bug where long legend labels were
+  // truncated with a CSS ellipsis in the generated PDF/HTML. The
+  // user wanted them to wrap onto multiple lines instead.
+  const longLabel = 'Muy insatisfecho con el servicio recibido por parte del equipo de atención al cliente';
+  const veryLongLabel = 'Satisfecho porque la encuesta se realizó de manera eficiente y el personal fue amable durante toda la llamada telefónica';
+
+  const rawRows: Record<string, string>[] = [
+    ...Array.from({ length: 5 }, () => ({ A: longLabel })),
+    ...Array.from({ length: 3 }, () => ({ A: veryLongLabel })),
+    ...Array.from({ length: 2 }, () => ({ A: 'Corto' })),
+  ];
+
+  const analysis: AIAnalysis = {
+    summary: '',
+    dataType: 'encuesta',
+    funnel: null,
+    questions: [
+      { id: 'q_opinion', columnLetter: 'A', questionText: '¿Cómo valora el servicio?', chartType: 'pie', rationale: '', enabled: true },
+    ],
+    tableRows: [],
+    flowchartPages: [],
+  };
+
+  const data = processDataset(rawRows, analysis);
+  const chartImages: Record<string, string> = { q_opinion: STUB_IMAGE };
+
+  const html = generateChartsHTML({
+    title: 'Satisfacción del cliente',
+    period: 'MARZO 2026',
+    clientName: 'Cliente X',
+    clientLogoBase64: null,
+    emitterLogoBase64: null,
+    data,
+    style: DEFAULT_STYLE,
+    chartImages,
+  });
+
+  it('includes the full long label text in the legend (not truncated)', () => {
+    // Escaped version of the label (apostrophes etc escaped by esc())
+    expect(html).toContain(longLabel);
+    expect(html).toContain(veryLongLabel);
+  });
+
+  it('does NOT apply "white-space: nowrap" to .legend-text', () => {
+    // Extract the .legend-text rule and check it allows wrapping.
+    const match = html.match(/\.legend-text\s*\{[^}]*\}/);
+    expect(match).not.toBeNull();
+    const rule = match![0];
+    expect(rule).not.toMatch(/white-space:\s*nowrap/);
+    expect(rule).not.toMatch(/text-overflow:\s*ellipsis/);
+    // And it should allow wrapping explicitly
+    expect(rule).toMatch(/overflow-wrap:\s*break-word|word-break:\s*break-word|white-space:\s*normal/);
+  });
+
+  it('aligns legend-item to flex-start so the dot stays at the top', () => {
+    const match = html.match(/\.legend-item\s*\{[^}]*\}/);
+    expect(match).not.toBeNull();
+    expect(match![0]).toMatch(/align-items:\s*flex-start/);
+  });
+
+  it('caps .legend-bar .legend-item width so chips wrap internally', () => {
+    const match = html.match(/\.legend-bar \.legend-item\s*\{[^}]*\}/);
+    expect(match).not.toBeNull();
+    expect(match![0]).toMatch(/max-width:/);
+  });
+
+  it('still generates a valid PDF with the wrapped legend', async () => {
+    const pdf = await generatePdf(html);
+    assertValidPdf(pdf, 10_000);
+  });
+});
