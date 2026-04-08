@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { generatePdf } from '@/lib/reports/pdf-generator';
 
+// PDF generation via Puppeteer can take 15-30s for large reports —
+// override the default 10s Vercel Hobby timeout. 60s is the max on
+// Hobby and well within the default on Pro.
+export const maxDuration = 60;
+export const runtime = 'nodejs';
+
 const MAX_HTML_SIZE = 10 * 1024 * 1024; // 10 MB
 
 export async function POST(request: NextRequest) {

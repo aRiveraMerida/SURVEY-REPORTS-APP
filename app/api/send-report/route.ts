@@ -8,6 +8,11 @@ import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { generatePdf } from '@/lib/reports/pdf-generator';
 
+// PDF generation + email send needs the serverless timeout raised
+// above the default 10s. 60s is the Hobby maximum.
+export const maxDuration = 60;
+export const runtime = 'nodejs';
+
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 const MAX_HTML_SIZE = 10 * 1024 * 1024;  // 10 MB
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
