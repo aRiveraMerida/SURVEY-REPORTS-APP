@@ -17,11 +17,13 @@ export default function ReportViewPage() {
 
   // Email sending state
   const [showSendPanel, setShowSendPanel] = useState(false);
-  const [sendFile, setSendFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [manualEmails, setManualEmails] = useState<string[]>([]);
   const [newManualEmail, setNewManualEmail] = useState('');
+  // Legacy fallback: reports created before source-file persistence need
+  // the user to upload the original file manually.
+  const [legacyFile, setLegacyFile] = useState<File | null>(null);
 
   const supabase = createClient();
 
@@ -48,36 +50,37 @@ export default function ReportViewPage() {
   if (loading) return <div className="text-center py-12 text-gray-400">Cargando informe...</div>;
   if (!report) return <div className="text-center py-12 text-gray-500">Informe no encontrado</div>;
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    if (!report) return;
     setPrinting(true);
-    const w = window.open('', '_blank');
-    if (!w) {
-      alert('No se pudo abrir la ventana de impresión. Permite las ventanas emergentes e inténtalo de nuevo.');
-      setPrinting(false);
-      return;
-    }
-    w.document.write(report.report_html);
-    w.document.close();
-
-    const triggerPrint = () => {
-      w.onafterprint = () => { w.close(); };
-      w.print();
-      setPrinting(false);
-    };
-
-    if (w.document.fonts && w.document.fonts.ready) {
-      w.document.fonts.ready.then(() => {
-        const images = Array.from(w.document.images);
-        if (images.length === 0) { triggerPrint(); return; }
-        let loaded = 0;
-        const checkDone = () => { if (++loaded >= images.length) triggerPrint(); };
-        images.forEach((img) => {
-          if (img.complete) { checkDone(); }
-          else { img.onload = checkDone; img.onerror = checkDone; }
-        });
+    try {
+      const res = await fetch('/api/generate-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          html: report.report_html,
+          filename: `${report.title} - ${report.period}`,
+        }),
       });
-    } else {
-      setTimeout(triggerPrint, 1200);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Error al generar el PDF.' }));
+        alert(err.error || 'Error al generar el PDF.');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${report.title} - ${report.period}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      logAction(supabase, 'report_exported_pdf', `/reports/${id}`);
+    } catch (err) {
+      alert('Error de conexión: ' + (err as Error).message);
+    } finally {
+      setPrinting(false);
     }
   };
 
@@ -104,11 +107,18 @@ export default function ReportViewPage() {
     ...manualEmails,
   ].filter((v, i, a) => a.indexOf(v) === i); // deduplicate
 
+  const hasStoredFile = !!report?.source_file_path;
+
   const handleSendEmail = async () => {
-    if (!report || !sendFile) return;
+    if (!report) return;
 
     if (allRecipients.length === 0) {
       setSendResult({ type: 'error', text: 'Añade al menos un destinatario. Puedes escribirlo abajo o configurar emails en el cliente desde el dashboard.' });
+      return;
+    }
+
+    if (!hasStoredFile && !legacyFile) {
+      setSendResult({ type: 'error', text: 'Este informe no tiene fichero original asociado. Adjunta el Excel/CSV de origen para continuar.' });
       return;
     }
 
@@ -120,24 +130,45 @@ export default function ReportViewPage() {
     setSendResult(null);
 
     try {
-      const arrayBuffer = await sendFile.arrayBuffer();
-      const base64 = btoa(
-        new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-      );
+      type SendBody = {
+        action: 'send-report';
+        clientId: string;
+        reportId?: string;
+        reportHtml: string;
+        originalFileBase64?: string;
+        originalFileName?: string;
+        title: string;
+        period: string;
+        overrideEmails: string[];
+      };
+
+      const payload: SendBody = {
+        action: 'send-report',
+        clientId: report.client_id,
+        reportHtml: report.report_html,
+        title: report.title,
+        period: report.period,
+        overrideEmails: allRecipients,
+      };
+
+      if (hasStoredFile) {
+        // Server loads the file from storage — guaranteed to be the exact
+        // one used to generate the report.
+        payload.reportId = report.id;
+      } else if (legacyFile) {
+        // Legacy reports: upload the file inline.
+        const arrayBuffer = await legacyFile.arrayBuffer();
+        const base64 = btoa(
+          new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+        );
+        payload.originalFileBase64 = base64;
+        payload.originalFileName = legacyFile.name;
+      }
 
       const res = await fetch('/api/send-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'send-report',
-          clientId: report.client_id,
-          reportHtml: report.report_html,
-          originalFileBase64: base64,
-          originalFileName: sendFile.name,
-          title: report.title,
-          period: report.period,
-          overrideEmails: allRecipients,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const result = await res.json();
@@ -173,7 +204,7 @@ export default function ReportViewPage() {
           disabled={printing}
           className="px-4 py-2 text-sm font-medium bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50"
         >
-          {printing ? 'Preparando PDF...' : 'Imprimir como PDF'}
+          {printing ? 'Generando PDF...' : 'Descargar PDF'}
         </button>
         <button
           onClick={handleExportExcel}
@@ -251,24 +282,44 @@ export default function ReportViewPage() {
             <p className="text-xs text-gray-400">El archivo original se enviará encriptado con contraseña.</p>
           )}
 
-          <div className="flex items-center gap-3">
-            <label className="flex-1">
-              <span className="block text-xs font-medium text-gray-600 mb-1">Archivo original (Excel/CSV) para adjuntar</span>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                onChange={(e) => { setSendFile(e.target.files?.[0] || null); setSendResult(null); }}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border file:border-gray-300 file:text-sm file:font-medium file:bg-white hover:file:bg-gray-50"
-              />
-            </label>
-            <button
-              onClick={handleSendEmail}
-              disabled={sending || !sendFile || allRecipients.length === 0}
-              className="px-5 py-2.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 self-end"
-            >
-              {sending ? 'Enviando...' : `Enviar a ${allRecipients.length}`}
-            </button>
-          </div>
+          {hasStoredFile ? (
+            <div className="flex items-center justify-between gap-3 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              <div className="text-xs text-gray-600">
+                <span className="font-medium">Fichero de datos:</span>{' '}
+                <span className="text-gray-800">{report.source_file_name}</span>
+                <div className="text-[11px] text-gray-400 mt-0.5">Se adjuntará automáticamente el fichero usado al generar este informe.</div>
+              </div>
+              <button
+                onClick={handleSendEmail}
+                disabled={sending || allRecipients.length === 0}
+                className="px-5 py-2.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+              >
+                {sending ? 'Enviando...' : `Enviar a ${allRecipients.length}`}
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <label className="flex-1">
+                <span className="block text-xs font-medium text-amber-700 mb-1">
+                  Este informe no tiene fichero original asociado (generado antes de la mejora).
+                  Adjunta el Excel/CSV de origen:
+                </span>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={(e) => { setLegacyFile(e.target.files?.[0] || null); setSendResult(null); }}
+                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border file:border-gray-300 file:text-sm file:font-medium file:bg-white hover:file:bg-gray-50"
+                />
+              </label>
+              <button
+                onClick={handleSendEmail}
+                disabled={sending || !legacyFile || allRecipients.length === 0}
+                className="px-5 py-2.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 self-end"
+              >
+                {sending ? 'Enviando...' : `Enviar a ${allRecipients.length}`}
+              </button>
+            </div>
+          )}
           {sendResult && (
             <div className={`mt-3 p-3 rounded-lg text-sm ${
               sendResult.type === 'success'

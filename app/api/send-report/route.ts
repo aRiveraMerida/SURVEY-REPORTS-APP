@@ -6,13 +6,30 @@ import { writeFileSync, readFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
-
-// PDF generation is optional — puppeteer/chromium may not be available in all environments
-let generatePdfAvailable = true;
+import { generatePdf } from '@/lib/reports/pdf-generator';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 const MAX_HTML_SIZE = 10 * 1024 * 1024;  // 10 MB
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Render an email subject using a template with placeholders:
+ *   {title}, {period}, {clientName}
+ * Falls back to "title — period" if template is missing.
+ */
+function renderEmailSubject(
+  template: string | null | undefined,
+  vars: { title: string; period: string; clientName: string }
+): string {
+  const safe = (s: string) => s.replace(/[\r\n]/g, ' ').trim();
+  const fallback = `${safe(vars.title)} — ${safe(vars.period)}`;
+  if (!template || !template.trim()) return fallback;
+  const rendered = template
+    .replace(/\{title\}/g, safe(vars.title))
+    .replace(/\{period\}/g, safe(vars.period))
+    .replace(/\{clientName\}/g, safe(vars.clientName));
+  return rendered.replace(/[\r\n]/g, ' ').trim().substring(0, 200) || fallback;
+}
 
 interface SmtpConfig {
   host: string;
@@ -49,58 +66,6 @@ function createTransporter(smtp: SmtpConfig) {
     secure: smtp.port === 465,
     auth: { user: smtp.user, pass: smtp.pass },
   });
-}
-
-async function generatePdf(html: string): Promise<Buffer | null> {
-  const isLandscape = html.includes('landscape');
-  const pdfOptions = {
-    format: 'A4' as const,
-    landscape: isLandscape,
-    printBackground: true,
-    margin: { top: 0, right: 0, bottom: 0, left: 0 },
-    timeout: 30000,
-  };
-
-  // Strategy 1: @sparticuz/chromium (Vercel / serverless)
-  try {
-    const chromium = await import('@sparticuz/chromium');
-    const puppeteerCore = await import('puppeteer-core');
-    const executablePath = await chromium.default.executablePath();
-    const browser = await puppeteerCore.default.launch({
-      args: chromium.default.args,
-      executablePath,
-      headless: true,
-    });
-    try {
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
-      const pdfBuffer = await page.pdf(pdfOptions);
-      return Buffer.from(pdfBuffer);
-    } finally {
-      await browser.close();
-    }
-  } catch {
-    // Not in serverless — try full puppeteer
-  }
-
-  // Strategy 2: Full puppeteer (local dev — bundles its own Chromium)
-  try {
-    const puppeteer = await import('puppeteer');
-    const browser = await puppeteer.default.launch({ headless: true });
-    try {
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
-      const pdfBuffer = await page.pdf(pdfOptions);
-      return Buffer.from(pdfBuffer);
-    } finally {
-      await browser.close();
-    }
-  } catch {
-    // Puppeteer not available either
-  }
-
-  generatePdfAvailable = false;
-  return null;
 }
 
 function sanitizeFileName(name: string): string {
@@ -170,9 +135,9 @@ export async function POST(request: NextRequest) {
 
     // Send report email
     if (body.action === 'send-report') {
-      const { clientId, reportHtml, originalFileBase64, originalFileName, title, period } = body;
+      const { clientId, reportId, reportHtml, title, period } = body;
 
-      if (!clientId || !reportHtml || !originalFileBase64 || !originalFileName) {
+      if (!clientId || !reportHtml) {
         return NextResponse.json(
           { error: 'Faltan datos requeridos.' },
           { status: 400 }
@@ -184,24 +149,67 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'El HTML del informe es demasiado grande.' }, { status: 400 });
       }
 
-      if (typeof originalFileName !== 'string' || originalFileName.length > 255) {
-        return NextResponse.json({ error: 'Nombre de archivo demasiado largo.' }, { status: 400 });
+      // Resolve the original source file. Priority:
+      //   1. `reportId` → load source_file_path from the report row, download from storage
+      //   2. `originalFileBase64` + `originalFileName` → inline upload (used by new-report wizard
+      //      before the report exists in DB)
+      let originalBuffer: Buffer | null = null;
+      let originalFileName: string | null = null;
+
+      if (reportId && typeof reportId === 'string') {
+        const { data: reportRow } = await supabase
+          .from('reports')
+          .select('source_file_path, source_file_name')
+          .eq('id', reportId)
+          .single();
+
+        if (!reportRow?.source_file_path || !reportRow?.source_file_name) {
+          return NextResponse.json(
+            { error: 'Este informe no tiene fichero original asociado. Regenéralo desde el asistente.' },
+            { status: 400 }
+          );
+        }
+
+        const { data: fileData, error: dlErr } = await supabase
+          .storage
+          .from('source-files')
+          .download(reportRow.source_file_path);
+
+        if (dlErr || !fileData) {
+          return NextResponse.json(
+            { error: 'No se pudo descargar el fichero original del almacenamiento.' },
+            { status: 500 }
+          );
+        }
+
+        originalBuffer = Buffer.from(await fileData.arrayBuffer());
+        originalFileName = reportRow.source_file_name;
+      } else if (body.originalFileBase64 && body.originalFileName) {
+        if (typeof body.originalFileName !== 'string' || body.originalFileName.length > 255) {
+          return NextResponse.json({ error: 'Nombre de archivo demasiado largo.' }, { status: 400 });
+        }
+        try {
+          originalBuffer = Buffer.from(body.originalFileBase64, 'base64');
+        } catch {
+          return NextResponse.json({ error: 'Error al decodificar el archivo.' }, { status: 400 });
+        }
+        originalFileName = body.originalFileName;
+      } else {
+        return NextResponse.json(
+          { error: 'Falta el fichero original. Envía reportId o originalFileBase64.' },
+          { status: 400 }
+        );
       }
 
-      // Decode and validate file size
-      let originalBuffer: Buffer;
-      try {
-        originalBuffer = Buffer.from(originalFileBase64, 'base64');
-      } catch {
-        return NextResponse.json({ error: 'Error al decodificar el archivo.' }, { status: 400 });
-      }
-
-      if (originalBuffer.length === 0) {
+      if (!originalBuffer || originalBuffer.length === 0 || !originalFileName) {
         return NextResponse.json({ error: 'El archivo está vacío.' }, { status: 400 });
       }
       if (originalBuffer.length > MAX_FILE_SIZE) {
         return NextResponse.json({ error: 'El archivo supera el límite de 25 MB.' }, { status: 400 });
       }
+      // From here on the TS types are non-null — pin locals for type-narrowing
+      const sourceBuffer: Buffer = originalBuffer;
+      const sourceFileName: string = originalFileName;
 
       // Get SMTP config
       const smtp = await getSmtpConfig(supabase);
@@ -215,7 +223,7 @@ export async function POST(request: NextRequest) {
       // Get client config
       const { data: client } = await supabase
         .from('clients')
-        .select('name, contact_emails, file_password')
+        .select('name, contact_emails, file_password, email_subject_template')
         .eq('id', clientId)
         .single();
 
@@ -245,53 +253,55 @@ export async function POST(request: NextRequest) {
       const safeTitle = ((title || 'Informe') as string).replace(/[<>:"/\\|?*]/g, '').substring(0, 100);
       const safePeriod = ((period || '') as string).replace(/[<>:"/\\|?*]/g, '').substring(0, 50);
 
-      // Try PDF generation, fall back to HTML attachment
-      let attachedFormat = 'HTML';
-      if (generatePdfAvailable) {
-        const pdfBuffer = await generatePdf(reportHtml);
-        if (pdfBuffer) {
-          attachments.push({
-            filename: `${safeTitle} - ${safePeriod}.pdf`,
-            content: pdfBuffer,
-            contentType: 'application/pdf',
-          });
-          attachedFormat = 'PDF';
-        }
+      // Generate PDF — always required, no HTML fallback.
+      // If Puppeteer is not installed/working we surface the real error
+      // so the user can fix the deploy instead of silently shipping HTML.
+      let pdfBuffer: Buffer;
+      try {
+        pdfBuffer = await generatePdf(reportHtml);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Error desconocido generando PDF.';
+        return NextResponse.json(
+          { error: `No se pudo generar el PDF del informe: ${msg}` },
+          { status: 500 }
+        );
       }
 
-      // If PDF failed or unavailable, attach as HTML
-      if (attachedFormat === 'HTML') {
-        attachments.push({
-          filename: `${safeTitle} - ${safePeriod}.html`,
-          content: Buffer.from(reportHtml, 'utf-8'),
-          contentType: 'text/html',
-        });
-      }
+      attachments.push({
+        filename: `${safeTitle} - ${safePeriod}.pdf`,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      });
 
       // Original file: encrypt with ZIP if password configured, otherwise attach as-is
       if (client.file_password && client.file_password.trim()) {
         try {
-          const zipBuffer = encryptFileWithZip(originalBuffer, originalFileName, client.file_password.trim());
-          const safeOrigName = sanitizeFileName(originalFileName.replace(/\.[^.]+$/, ''));
+          const zipBuffer = encryptFileWithZip(sourceBuffer, sourceFileName, client.file_password.trim());
+          const safeOrigName = sanitizeFileName(sourceFileName.replace(/\.[^.]+$/, ''));
           attachments.push({
             filename: `${safeOrigName}.zip`,
             content: zipBuffer,
             contentType: 'application/zip',
           });
         } catch (encErr) {
-          // Encryption failed — attach file without encryption
-          console.error('ZIP encryption failed, attaching unencrypted:', encErr);
-          attachments.push({
-            filename: sanitizeFileName(originalFileName),
-            content: originalBuffer,
-          });
+          console.error('ZIP encryption failed:', encErr);
+          return NextResponse.json(
+            { error: 'No se pudo encriptar el fichero adjunto con la contraseña del cliente. Revisa que la utilidad zip esté disponible en el servidor.' },
+            { status: 500 }
+          );
         }
       } else {
         attachments.push({
-          filename: sanitizeFileName(originalFileName),
-          content: originalBuffer,
+          filename: sanitizeFileName(sourceFileName),
+          content: sourceBuffer,
         });
       }
+
+      const subject = renderEmailSubject(client.email_subject_template, {
+        title: safeTitle,
+        period: safePeriod,
+        clientName: client.name || '',
+      });
 
       // Send email
       try {
@@ -299,13 +309,13 @@ export async function POST(request: NextRequest) {
         await transporter.sendMail({
           from: smtp.from,
           to: validEmails.join(', '),
-          subject: `${safeTitle} — ${safePeriod}`,
+          subject,
           html: `
             <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
               <h2 style="color:#53860F;margin-bottom:8px;">${safeTitle}</h2>
               <p style="color:#666;margin-bottom:20px;">Periodo: <strong>${safePeriod}</strong></p>
               <p style="color:#333;line-height:1.6;">
-                Adjunto encontrará el informe generado en formato ${attachedFormat}${client.file_password ? ' y el archivo de datos original en un ZIP protegido con contraseña' : ' y el archivo de datos original'}.
+                Adjunto encontrará el informe generado en formato PDF${client.file_password ? ' y el archivo de datos original en un ZIP protegido con contraseña' : ' y el archivo de datos original'}.
               </p>
               ${client.file_password ? '<p style="color:#888;font-size:13px;margin-top:16px;">El archivo ZIP está protegido con la contraseña que le fue comunicada previamente.</p>' : ''}
               <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">

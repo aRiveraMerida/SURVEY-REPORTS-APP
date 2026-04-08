@@ -24,6 +24,7 @@ export default function HomePage() {
   const [contactEmails, setContactEmails] = useState<string[]>([]);
   const [newContactEmail, setNewContactEmail] = useState('');
   const [filePassword, setFilePassword] = useState('');
+  const [emailSubjectTemplate, setEmailSubjectTemplate] = useState('');
   const [saving, setSaving] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
 
@@ -56,11 +57,13 @@ export default function HomePage() {
 
   const openCreate = () => {
     setEditingClient(null); setName(''); setNotes(''); setLogoFile(null); setLogoPreview(null);
-    setContactEmails([]); setNewContactEmail(''); setFilePassword(''); setShowModal(true);
+    setContactEmails([]); setNewContactEmail(''); setFilePassword('');
+    setEmailSubjectTemplate(''); setShowModal(true);
   };
   const openEdit = (c: Client) => {
     setEditingClient(c); setName(c.name); setNotes(c.notes || ''); setLogoFile(null); setLogoPreview(c.logo_url);
-    setContactEmails(c.contact_emails || []); setNewContactEmail(''); setFilePassword(c.file_password || ''); setShowModal(true);
+    setContactEmails(c.contact_emails || []); setNewContactEmail(''); setFilePassword(c.file_password || '');
+    setEmailSubjectTemplate(c.email_subject_template || ''); setShowModal(true);
   };
 
   const handleSave = async () => {
@@ -79,6 +82,7 @@ export default function HomePage() {
       logo_url: logoUrl,
       contact_emails: contactEmails,
       file_password: filePassword.trim() || null,
+      email_subject_template: emailSubjectTemplate.trim() || null,
     };
     if (editingClient) {
       await supabase.from('clients').update(clientData).eq('id', editingClient.id);
@@ -247,6 +251,25 @@ export default function HomePage() {
                 <input type="text" value={filePassword} onChange={(e) => setFilePassword(e.target.value)}
                   placeholder="Contraseña de encriptación"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono" />
+              </div>
+
+              {/* Email subject template */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Plantilla de asunto del email</label>
+                <p className="text-xs text-gray-400 mb-2">
+                  Personaliza el asunto. Placeholders disponibles:{' '}
+                  <code className="text-gray-600">{'{title}'}</code>,{' '}
+                  <code className="text-gray-600">{'{period}'}</code>,{' '}
+                  <code className="text-gray-600">{'{clientName}'}</code>.
+                  Por defecto: <em>Título — Periodo</em>.
+                </p>
+                <input
+                  type="text"
+                  value={emailSubjectTemplate}
+                  onChange={(e) => setEmailSubjectTemplate(e.target.value)}
+                  placeholder="Ej: Informe {title} - {period} ({clientName})"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">

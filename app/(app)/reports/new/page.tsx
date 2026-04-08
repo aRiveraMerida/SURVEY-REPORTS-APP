@@ -7,6 +7,12 @@ import { createClient } from '@/lib/supabase/client';
 import { parseFile, getColumnHeaders, type ParsedData } from '@/lib/processing/parser';
 import { buildColumnStats } from '@/lib/processing/stats';
 import { processDataset } from '@/lib/processing/processor';
+import {
+  synthesizeTableRows,
+  synthesizeFlowchartPages,
+  aiTableRowsAreEmpty,
+  aiFlowchartPagesAreEmpty,
+} from '@/lib/processing/synthesizer';
 import { renderChartToBase64, imageUrlToBase64 } from '@/lib/reports/chart-renderer';
 import { generateChartsHTML } from '@/lib/reports/charts-html';
 import { generateTableHTML } from '@/lib/reports/table-html';
@@ -174,16 +180,24 @@ function NewReportContent() {
 
       let html = '';
       if (type === 'table') {
+        // Fall back to a synthesized table when the AI returned empty rows
+        // or when all AI rows would resolve to zero (no funnel in data).
+        const tableRows = aiTableRowsAreEmpty(analysis.tableRows, data)
+          ? synthesizeTableRows(data)
+          : analysis.tableRows;
         html = generateTableHTML({
           title, period, clientName: selectedClient.name,
           clientLogoBase64, emitterLogoBase64, data, style,
-          tableConfig: { rows: analysis.tableRows },
+          tableConfig: { rows: tableRows },
         });
       } else if (type === 'flowchart') {
+        const flowchartPages = aiFlowchartPagesAreEmpty(analysis.flowchartPages, data)
+          ? synthesizeFlowchartPages(data)
+          : analysis.flowchartPages;
         html = generateFlowchartHTML({
           title, period, clientName: selectedClient.name,
           clientLogoBase64, emitterLogoBase64, data, style,
-          flowchartPages: analysis.flowchartPages,
+          flowchartPages,
         });
       } else {
         const chartImages: Record<string, string> = {};
@@ -207,59 +221,85 @@ function NewReportContent() {
   };
 
   const handleSave = async () => {
-    if (!processedData || !reportHtml || !analysis) return;
+    if (!processedData || !reportHtml || !analysis || !file) return;
     setSaving(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from('reports').insert({
-      client_id: selectedClientId,
-      title, period,
-      report_type: reportType,
-      ai_analysis: analysis,
-      report_html: reportHtml,
-      report_data: processedData,
-      created_by: user?.id,
-    });
-    if (error) {
-      alert('Error al guardar: ' + error.message);
-    } else {
-      logAction(supabase, 'report_created', '/reports/new');
-      router.push(`/clients/${selectedClientId}`);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      // Upload the original source file to storage so it stays attached
+      // to the report and doesn't need to be re-uploaded on email send.
+      const ext = file.name.split('.').pop() || 'bin';
+      const storagePath = `${selectedClientId}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
+      const { error: uploadErr } = await supabase
+        .storage
+        .from('source-files')
+        .upload(storagePath, file, {
+          contentType: file.type || 'application/octet-stream',
+          upsert: false,
+        });
+      if (uploadErr) {
+        alert('Error al subir el fichero original: ' + uploadErr.message);
+        setSaving(false);
+        return;
+      }
+
+      const { error } = await supabase.from('reports').insert({
+        client_id: selectedClientId,
+        title, period,
+        report_type: reportType,
+        ai_analysis: analysis,
+        report_html: reportHtml,
+        report_data: processedData,
+        source_file_path: storagePath,
+        source_file_name: file.name,
+        created_by: user?.id,
+      });
+      if (error) {
+        // Roll back the uploaded file if the row insert failed
+        await supabase.storage.from('source-files').remove([storagePath]);
+        alert('Error al guardar: ' + error.message);
+      } else {
+        logAction(supabase, 'report_created', '/reports/new');
+        router.push(`/clients/${selectedClientId}`);
+      }
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const [printing, setPrinting] = useState(false);
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    if (!reportHtml) return;
     setPrinting(true);
-    const w = window.open('', '_blank');
-    if (!w) {
-      alert('No se pudo abrir la ventana de impresión. Permite las ventanas emergentes e inténtalo de nuevo.');
-      setPrinting(false);
-      return;
-    }
-    w.document.write(reportHtml);
-    w.document.close();
-
-    const triggerPrint = () => {
-      w.onafterprint = () => { w.close(); };
-      w.print();
-      setPrinting(false);
-    };
-
-    if (w.document.fonts && w.document.fonts.ready) {
-      w.document.fonts.ready.then(() => {
-        const images = Array.from(w.document.images);
-        if (images.length === 0) { triggerPrint(); return; }
-        let loaded = 0;
-        const checkDone = () => { if (++loaded >= images.length) triggerPrint(); };
-        images.forEach((img) => {
-          if (img.complete) { checkDone(); }
-          else { img.onload = checkDone; img.onerror = checkDone; }
-        });
+    try {
+      const res = await fetch('/api/generate-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          html: reportHtml,
+          filename: `${title} - ${period}`,
+        }),
       });
-    } else {
-      setTimeout(triggerPrint, 1200);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Error al generar el PDF.' }));
+        alert(err.error || 'Error al generar el PDF.');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title} - ${period}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      logAction(supabase, 'report_exported_pdf', '/reports/new');
+    } catch (err) {
+      alert('Error de conexión: ' + (err as Error).message);
+    } finally {
+      setPrinting(false);
     }
   };
 
