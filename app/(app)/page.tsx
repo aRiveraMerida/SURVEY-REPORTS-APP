@@ -306,197 +306,223 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Create/Edit modal */}
+      {/* Create/Edit modal
+          Layout: overlay → card with sticky header + scrollable body
+          + sticky footer. The card takes up to 90vh on desktop and
+          full-screen on mobile so the body never gets cut off by a
+          tall form (which now includes the email subject builder). */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
-            <h2 className="text-lg font-semibold mb-4">{editingClient ? 'Editar cliente' : 'Nuevo cliente'}</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
-                <input type="text" value={name} onChange={(e) => setName(e.target.value)}
-                  placeholder="Nombre del cliente" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notas</label>
-                <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Notas opcionales" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Logo</label>
-                <div className="flex items-center gap-4">
-                  {logoPreview ? (
-                    <img src={logoPreview} alt="" className="w-14 h-14 object-contain rounded-lg border" />
-                  ) : (
-                    <div className="w-14 h-14 bg-gray-100 rounded-lg" />
-                  )}
-                  <label className="cursor-pointer px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
-                    {logoPreview ? 'Cambiar' : 'Subir logo'}
-                    <input type="file" accept="image/*" className="hidden"
-                      onChange={(e) => { const f = e.target.files?.[0]; if (f) { setLogoFile(f); setLogoPreview(URL.createObjectURL(f)); } }} />
-                  </label>
-                </div>
-              </div>
+        <div className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-black/40 sm:p-4">
+          <div className="bg-white w-full sm:max-w-2xl sm:rounded-xl shadow-xl flex flex-col max-h-screen sm:max-h-[90vh]">
+            {/* Header (sticky) */}
+            <div className="flex-shrink-0 flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">
+                {editingClient ? 'Editar cliente' : 'Nuevo cliente'}
+              </h2>
+              <button
+                onClick={() => setShowModal(false)}
+                aria-label="Cerrar"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
 
-              {/* Email recipients */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Emails de contacto</label>
-                <p className="text-xs text-gray-400 mb-2">Destinatarios para el envío de informes</p>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {contactEmails.map((email, i) => (
-                    <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-sm">
-                      {email}
-                      <button onClick={() => setContactEmails(contactEmails.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500">×</button>
-                    </span>
-                  ))}
+            {/* Body (scrollable) */}
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                  <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+                    placeholder="Nombre del cliente" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
                 </div>
-                <div className="flex gap-2">
-                  <input type="email" value={newContactEmail}
-                    onChange={(e) => setNewContactEmail(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && newContactEmail.trim()) {
-                        e.preventDefault();
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Notas</label>
+                  <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Notas opcionales" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Logo</label>
+                  <div className="flex items-center gap-4">
+                    {logoPreview ? (
+                      <img src={logoPreview} alt="" className="w-14 h-14 object-contain rounded-lg border" />
+                    ) : (
+                      <div className="w-14 h-14 bg-gray-100 rounded-lg" />
+                    )}
+                    <label className="cursor-pointer px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
+                      {logoPreview ? 'Cambiar' : 'Subir logo'}
+                      <input type="file" accept="image/*" className="hidden"
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) { setLogoFile(f); setLogoPreview(URL.createObjectURL(f)); } }} />
+                    </label>
+                  </div>
+                </div>
+
+                {/* Email recipients */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Emails de contacto</label>
+                  <p className="text-xs text-gray-400 mb-2">Destinatarios para el envío de informes</p>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {contactEmails.map((email, i) => (
+                      <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-sm">
+                        {email}
+                        <button onClick={() => setContactEmails(contactEmails.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500">×</button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <input type="email" value={newContactEmail}
+                      onChange={(e) => setNewContactEmail(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newContactEmail.trim()) {
+                          e.preventDefault();
+                          setContactEmails([...contactEmails, newContactEmail.trim()]);
+                          setNewContactEmail('');
+                        }
+                      }}
+                      placeholder="email@cliente.com"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                    <button type="button" onClick={() => {
+                      if (newContactEmail.trim()) {
                         setContactEmails([...contactEmails, newContactEmail.trim()]);
                         setNewContactEmail('');
                       }
-                    }}
-                    placeholder="email@cliente.com"
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-                  <button type="button" onClick={() => {
-                    if (newContactEmail.trim()) {
-                      setContactEmails([...contactEmails, newContactEmail.trim()]);
-                      setNewContactEmail('');
-                    }
-                  }} className="px-3 py-2 text-sm bg-gray-100 rounded-lg hover:bg-gray-200">Añadir</button>
-                </div>
-              </div>
-
-              {/* File encryption password */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña para ficheros</label>
-                <p className="text-xs text-gray-400 mb-2">El archivo Excel adjunto se enviará encriptado con esta contraseña</p>
-                <input type="text" value={filePassword} onChange={(e) => setFilePassword(e.target.value)}
-                  placeholder="Contraseña de encriptación"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono" />
-              </div>
-
-              {/* Email subject builder — declarative form */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Asunto del email</label>
-                <p className="text-xs text-gray-400 mb-3">
-                  Elige qué partes incluir en el asunto cuando se envíe un informe a este cliente.
-                </p>
-
-                <div className="border border-gray-200 rounded-lg p-4 space-y-3 bg-gray-50">
-                  {/* Prefix */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Texto al principio (opcional)</label>
-                    <input
-                      type="text"
-                      value={subjectConfig.prefix}
-                      onChange={(e) => setSubjectConfig({ ...subjectConfig, prefix: e.target.value })}
-                      placeholder="Ej: Informe"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-                    />
-                  </div>
-
-                  {/* Included parts */}
-                  <div>
-                    <span className="block text-xs font-medium text-gray-600 mb-1.5">Incluir en el asunto</span>
-                    <div className="space-y-1.5">
-                      <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={subjectConfig.includeTitle}
-                          onChange={(e) => setSubjectConfig({ ...subjectConfig, includeTitle: e.target.checked })}
-                          className="w-4 h-4 rounded border-gray-300 text-corp focus:ring-corp"
-                        />
-                        Título del informe
-                      </label>
-                      <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={subjectConfig.includePeriod}
-                          onChange={(e) => setSubjectConfig({ ...subjectConfig, includePeriod: e.target.checked })}
-                          className="w-4 h-4 rounded border-gray-300 text-corp focus:ring-corp"
-                        />
-                        Periodo
-                      </label>
-                      <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={subjectConfig.includeClientName}
-                          onChange={(e) => setSubjectConfig({ ...subjectConfig, includeClientName: e.target.checked })}
-                          className="w-4 h-4 rounded border-gray-300 text-corp focus:ring-corp"
-                        />
-                        Nombre del cliente
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Separator */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Separador entre partes</label>
-                    <select
-                      value={subjectConfig.separator}
-                      onChange={(e) => setSubjectConfig({ ...subjectConfig, separator: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-                    >
-                      {SEPARATOR_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Suffix */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Texto al final (opcional)</label>
-                    <input
-                      type="text"
-                      value={subjectConfig.suffix}
-                      onChange={(e) => setSubjectConfig({ ...subjectConfig, suffix: e.target.value })}
-                      placeholder="Ej: (confidencial)"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-                    />
-                  </div>
-
-                  {/* Live preview */}
-                  <div className="pt-2 border-t border-gray-200">
-                    <span className="block text-xs font-medium text-gray-600 mb-1">Vista previa</span>
-                    <div className="px-3 py-2 bg-white border border-gray-200 rounded text-sm text-gray-800 font-medium">
-                      {renderSubjectFromConfig(subjectConfig, {
-                        title: name.trim() || 'Nombre del informe',
-                        period: 'MARZO 2026',
-                        clientName: name.trim() || 'Nombre del cliente',
-                      })}
-                    </div>
-                    <p className="text-[11px] text-gray-400 mt-1">
-                      Ejemplo usando periodo <em>MARZO 2026</em>. El título y el cliente se toman del informe enviado.
-                    </p>
+                    }} className="px-3 py-2 text-sm bg-gray-100 rounded-lg hover:bg-gray-200">Añadir</button>
                   </div>
                 </div>
 
-                {/* Legacy template notice */}
-                {editingClient?.email_subject_template && !editingClient?.email_subject_config && (
-                  <p className="text-[11px] text-amber-600 mt-2">
-                    Este cliente tenía una plantilla antigua con variables:{' '}
-                    <code className="text-amber-700">{editingClient.email_subject_template}</code>.
-                    Se reemplazará por el formulario de arriba al guardar.
+                {/* File encryption password */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña para ficheros</label>
+                  <p className="text-xs text-gray-400 mb-2">El archivo Excel adjunto se enviará encriptado con esta contraseña</p>
+                  <input type="text" value={filePassword} onChange={(e) => setFilePassword(e.target.value)}
+                    placeholder="Contraseña de encriptación"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono" />
+                </div>
+
+                {/* Email subject builder — declarative form */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Asunto del email</label>
+                  <p className="text-xs text-gray-400 mb-3">
+                    Elige qué partes incluir en el asunto cuando se envíe un informe a este cliente.
                   </p>
-                )}
+
+                  <div className="border border-gray-200 rounded-lg p-4 space-y-3 bg-gray-50">
+                    {/* Prefix */}
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Texto al principio (opcional)</label>
+                      <input
+                        type="text"
+                        value={subjectConfig.prefix}
+                        onChange={(e) => setSubjectConfig({ ...subjectConfig, prefix: e.target.value })}
+                        placeholder="Ej: Informe"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                      />
+                    </div>
+
+                    {/* Included parts */}
+                    <div>
+                      <span className="block text-xs font-medium text-gray-600 mb-1.5">Incluir en el asunto</span>
+                      <div className="space-y-1.5">
+                        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={subjectConfig.includeTitle}
+                            onChange={(e) => setSubjectConfig({ ...subjectConfig, includeTitle: e.target.checked })}
+                            className="w-4 h-4 rounded border-gray-300 text-corp focus:ring-corp"
+                          />
+                          Título del informe
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={subjectConfig.includePeriod}
+                            onChange={(e) => setSubjectConfig({ ...subjectConfig, includePeriod: e.target.checked })}
+                            className="w-4 h-4 rounded border-gray-300 text-corp focus:ring-corp"
+                          />
+                          Periodo
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={subjectConfig.includeClientName}
+                            onChange={(e) => setSubjectConfig({ ...subjectConfig, includeClientName: e.target.checked })}
+                            className="w-4 h-4 rounded border-gray-300 text-corp focus:ring-corp"
+                          />
+                          Nombre del cliente
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Separator */}
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Separador entre partes</label>
+                      <select
+                        value={subjectConfig.separator}
+                        onChange={(e) => setSubjectConfig({ ...subjectConfig, separator: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                      >
+                        {SEPARATOR_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Suffix */}
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Texto al final (opcional)</label>
+                      <input
+                        type="text"
+                        value={subjectConfig.suffix}
+                        onChange={(e) => setSubjectConfig({ ...subjectConfig, suffix: e.target.value })}
+                        placeholder="Ej: (confidencial)"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                      />
+                    </div>
+
+                    {/* Live preview */}
+                    <div className="pt-2 border-t border-gray-200">
+                      <span className="block text-xs font-medium text-gray-600 mb-1">Vista previa</span>
+                      <div className="px-3 py-2 bg-white border border-gray-200 rounded text-sm text-gray-800 font-medium break-words">
+                        {renderSubjectFromConfig(subjectConfig, {
+                          title: name.trim() || 'Nombre del informe',
+                          period: 'MARZO 2026',
+                          clientName: name.trim() || 'Nombre del cliente',
+                        })}
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-1">
+                        Ejemplo usando periodo <em>MARZO 2026</em>. El título y el cliente se toman del informe enviado.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Legacy template notice */}
+                  {editingClient?.email_subject_template && !editingClient?.email_subject_config && (
+                    <p className="text-[11px] text-amber-600 mt-2">
+                      Este cliente tenía una plantilla antigua con variables:{' '}
+                      <code className="text-amber-700">{editingClient.email_subject_template}</code>.
+                      Se reemplazará por el formulario de arriba al guardar.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
-            {saveError && (
-              <div className="mt-4 p-3 rounded-lg text-sm bg-red-50 text-red-700 border border-red-200">
-                {saveError}
+
+            {/* Footer (sticky) */}
+            <div className="flex-shrink-0 px-6 py-4 border-t border-gray-200 bg-white sm:rounded-b-xl">
+              {saveError && (
+                <div className="mb-3 p-3 rounded-lg text-sm bg-red-50 text-red-700 border border-red-200">
+                  {saveError}
+                </div>
+              )}
+              <div className="flex justify-end gap-3">
+                <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
+                <button onClick={handleSave} disabled={!name.trim() || saving}
+                  className="px-4 py-2 text-sm font-medium bg-corp text-white rounded-lg hover:bg-corp-dark disabled:opacity-50">
+                  {saving ? 'Guardando...' : 'Guardar'}
+                </button>
               </div>
-            )}
-            <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancelar</button>
-              <button onClick={handleSave} disabled={!name.trim() || saving}
-                className="px-4 py-2 text-sm font-medium bg-corp text-white rounded-lg hover:bg-corp-dark disabled:opacity-50">
-                {saving ? 'Guardando...' : 'Guardar'}
-              </button>
             </div>
           </div>
         </div>
