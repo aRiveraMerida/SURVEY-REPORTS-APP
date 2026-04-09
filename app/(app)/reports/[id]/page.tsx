@@ -141,7 +141,6 @@ export default function ReportViewPage() {
           action: 'send-report',
           clientId: report.client_id,
           reportId: report.id,
-          reportHtml: report.report_html,
           title: report.title,
           period: report.period,
           overrideEmails: allRecipients,

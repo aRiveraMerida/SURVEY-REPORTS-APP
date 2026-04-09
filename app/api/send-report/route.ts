@@ -93,95 +93,68 @@ export async function POST(request: NextRequest) {
 
     // Send report email
     if (body.action === 'send-report') {
-      const { clientId, reportId, reportHtml, title, period } = body;
+      const { clientId, reportId, title, period } = body;
 
-      if (!clientId || !reportHtml) {
+      if (!clientId || !reportId) {
         return NextResponse.json(
-          { error: 'Faltan datos requeridos.' },
+          { error: 'Faltan datos requeridos (clientId y reportId).' },
           { status: 400 }
         );
       }
 
-      // Validate input sizes
-      if (typeof reportHtml !== 'string' || reportHtml.length > MAX_HTML_SIZE) {
-        return NextResponse.json({ error: 'El HTML del informe es demasiado grande.' }, { status: 400 });
+      // Load the report row (HTML + source file path) from the DB
+      // instead of receiving the HTML in the request body — the HTML
+      // with embedded base64 chart images can exceed Vercel's 4.5 MB
+      // body size limit for serverless functions.
+      const { data: reportRow, error: reportErr } = await supabase
+        .from('reports')
+        .select('*')
+        .eq('id', reportId)
+        .single();
+
+      if (reportErr || !reportRow) {
+        return NextResponse.json(
+          { error: reportErr ? `Error cargando el informe: ${reportErr.message}` : 'Informe no encontrado.' },
+          { status: reportErr ? 500 : 404 }
+        );
       }
 
-      // Resolve the original source file. Priority:
-      //   1. `reportId` → load source_file_path from the report row, download from storage
-      //   2. `originalFileBase64` + `originalFileName` → inline upload (used by new-report wizard
-      //      before the report exists in DB)
-      let originalBuffer: Buffer | null = null;
-      let originalFileName: string | null = null;
+      const reportHtml: string = typeof reportRow.report_html === 'string' ? reportRow.report_html : '';
+      if (!reportHtml) {
+        return NextResponse.json({ error: 'El informe no tiene HTML generado.' }, { status: 400 });
+      }
 
-      if (reportId && typeof reportId === 'string') {
-        // SELECT * so the query doesn't blow up if migration 005 hasn't
-        // been applied yet (source_file_path / source_file_name may not
-        // exist). We validate presence below.
-        const { data: reportRow, error: reportErr } = await supabase
-          .from('reports')
-          .select('*')
-          .eq('id', reportId)
-          .single();
+      // Resolve the original source file from the report row
+      // Load the source file from storage
+      const sourcePath: string | null = typeof reportRow.source_file_path === 'string' ? reportRow.source_file_path : null;
+      const sourceFileName: string = typeof reportRow.source_file_name === 'string' ? reportRow.source_file_name : 'datos.xlsx';
 
-        if (reportErr) {
-          console.error('Report lookup failed:', reportErr);
-          return NextResponse.json(
-            { error: `Error consultando el informe: ${reportErr.message}` },
-            { status: 500 }
-          );
-        }
-
-        const sourcePath: string | null = typeof reportRow?.source_file_path === 'string' ? reportRow.source_file_path : null;
-        const sourceName: string | null = typeof reportRow?.source_file_name === 'string' ? reportRow.source_file_name : null;
-
-        if (!sourcePath || !sourceName) {
-          return NextResponse.json(
-            { error: 'Este informe no tiene fichero original asociado. Adjunta el Excel/CSV manualmente o regenéralo desde el asistente.' },
-            { status: 400 }
-          );
-        }
-
-        const { data: fileData, error: dlErr } = await supabase
-          .storage
-          .from('source-files')
-          .download(sourcePath);
-
-        if (dlErr || !fileData) {
-          return NextResponse.json(
-            { error: 'No se pudo descargar el fichero original del almacenamiento.' },
-            { status: 500 }
-          );
-        }
-
-        originalBuffer = Buffer.from(await fileData.arrayBuffer());
-        originalFileName = sourceName;
-      } else if (body.originalFileBase64 && body.originalFileName) {
-        if (typeof body.originalFileName !== 'string' || body.originalFileName.length > 255) {
-          return NextResponse.json({ error: 'Nombre de archivo demasiado largo.' }, { status: 400 });
-        }
-        try {
-          originalBuffer = Buffer.from(body.originalFileBase64, 'base64');
-        } catch {
-          return NextResponse.json({ error: 'Error al decodificar el archivo.' }, { status: 400 });
-        }
-        originalFileName = body.originalFileName;
-      } else {
+      if (!sourcePath) {
         return NextResponse.json(
-          { error: 'Falta el fichero original. Envía reportId o originalFileBase64.' },
+          { error: 'Este informe no tiene fichero original asociado. Regenéralo desde el asistente.' },
           { status: 400 }
         );
       }
 
-      if (!originalBuffer || originalBuffer.length === 0 || !originalFileName) {
+      const { data: fileData, error: dlErr } = await supabase
+        .storage
+        .from('source-files')
+        .download(sourcePath);
+
+      if (dlErr || !fileData) {
+        return NextResponse.json(
+          { error: 'No se pudo descargar el fichero original del almacenamiento.' },
+          { status: 500 }
+        );
+      }
+
+      const originalBuffer = Buffer.from(await fileData.arrayBuffer());
+      if (originalBuffer.length === 0) {
         return NextResponse.json({ error: 'El archivo está vacío.' }, { status: 400 });
       }
       if (originalBuffer.length > MAX_FILE_SIZE) {
         return NextResponse.json({ error: 'El archivo supera el límite de 25 MB.' }, { status: 400 });
       }
-      // From here on the TS types are non-null — pin locals for type-narrowing
-      const sourceBuffer: Buffer = originalBuffer;
-      const sourceFileName: string = originalFileName;
 
       // Get SMTP config
       const smtp = await getSmtpConfig(supabase);
@@ -274,7 +247,7 @@ export async function POST(request: NextRequest) {
       if (trimmedPassword) {
         try {
           const zipBuffer = await encryptFileWithZip(
-            sourceBuffer,
+            originalBuffer,
             sanitizeFileName(sourceFileName),
             trimmedPassword
           );
@@ -295,7 +268,7 @@ export async function POST(request: NextRequest) {
       } else {
         attachments.push({
           filename: sanitizeFileName(sourceFileName),
-          content: sourceBuffer,
+          content: originalBuffer,
         });
       }
 
