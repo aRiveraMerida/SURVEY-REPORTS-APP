@@ -124,87 +124,49 @@ export default function HomePage() {
       logoUrl = newUrl;
     }
 
-    // Build the payload. `email_subject_config` was added in migration
-    // 006 (and `email_subject_template` back in 005). If either migration
-    // hasn't been applied the insert/update would fail with "column does
-    // not exist"; the writeClient helper catches that and retries after
-    // dropping the missing columns, so the user never hits a dead end.
-    type ClientWritePayload = {
-      name: string;
-      notes: string | null;
-      logo_url: string | null;
-      contact_emails: string[];
-      file_password: string | null;
-      email_subject_config?: EmailConfig | null;
-      // email_subject_template is legacy — we no longer WRITE it from
-      // the UI (the new form replaces it). We clear it on save so
-      // there's a single source of truth.
-      email_subject_template?: string | null;
-    };
-    const clientData: ClientWritePayload = {
+    const clientData = {
       name: name.trim(),
       notes: notes.trim() || null,
       logo_url: logoUrl,
       contact_emails: contactEmails,
       file_password: filePassword.trim() || null,
       email_subject_config: {
-        subject: emailSubject.trim() || undefined,
-        bodyHtml: emailBodyHtml.trim() || undefined,
-      } as EmailConfig,
+        subject: emailSubject.trim() || null,
+        bodyHtml: emailBodyHtml.trim() || null,
+      },
       email_subject_template: null,
     };
 
-    // Helper that performs the DB write with graceful fallback when a
-    // column is missing. Tries the full payload first; on "column
-    // does not exist" it drops the offending field and retries, up to
-    // a hard limit. Returns `null` on success or the final error
-    // message on failure.
-    const writeClient = async (): Promise<string | null> => {
-      const { data: { user } } = editingClient
-        ? { data: { user: null } }
-        : await supabase.auth.getUser();
-      if (!editingClient && !user) {
-        return 'No hay sesión activa. Vuelve a iniciar sesión.';
+    let errMsg: string | null = null;
+
+    if (editingClient) {
+      const { error } = await supabase
+        .from('clients')
+        .update(clientData)
+        .eq('id', editingClient.id);
+      if (error) errMsg = error.message;
+    } else {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setSaveError('No hay sesión activa. Vuelve a iniciar sesión.');
+        setSaving(false);
+        return;
       }
-
-      // Build an ordered list of optional fields we'll strip on retry
-      // when their column is missing, most-recently-added first.
-      const OPTIONAL_FIELDS: (keyof ClientWritePayload)[] = [
-        'email_subject_config',
-        'email_subject_template',
-      ];
-
-      const payload: ClientWritePayload = { ...clientData };
-      for (let attempt = 0; attempt <= OPTIONAL_FIELDS.length; attempt++) {
-        const { error } = editingClient
-          ? await supabase.from('clients').update(payload).eq('id', editingClient.id)
-          : await supabase.from('clients').insert({ ...payload, created_by: user!.id });
-
-        if (!error) {
-          if (!editingClient) logAction(supabase, 'client_created', '/');
-          return null;
-        }
-
-        // On column-missing errors, strip the matching field and retry.
-        const missingField = OPTIONAL_FIELDS.find(
-          (f) => new RegExp(String(f), 'i').test(error.message) && f in payload,
-        );
-        if (missingField) {
-          console.warn(
-            `clients.${String(missingField)} column missing; retrying without it. Apply the latest migration to enable.`,
-          );
-          delete payload[missingField];
-          continue;
-        }
-        return error.message;
+      const { error } = await supabase
+        .from('clients')
+        .insert({ ...clientData, created_by: user.id });
+      if (error) {
+        errMsg = error.message;
+      } else {
+        logAction(supabase, 'client_created', '/');
       }
-      return 'No se pudo guardar el cliente tras varios reintentos.';
-    };
-
-    const errMsg = await writeClient();
+    }
 
     if (errMsg) {
-      setSaveError(`Error al guardar el cliente: ${errMsg}`);
+      const hint = /email_subject_config|email_subject_template|source_file/i.test(errMsg)
+        ? ' Ejecuta el script supabase/migrations/apply-all.sql en el SQL editor de Supabase para crear las columnas y buckets necesarios.'
+        : '';
+      setSaveError(`Error al guardar el cliente: ${errMsg}${hint}`);
       setSaving(false);
       return;
     }
