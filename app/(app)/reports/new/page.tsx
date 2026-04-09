@@ -262,52 +262,30 @@ function NewReportContent() {
         return;
       }
 
-      // Try to upload the original source file to storage so it stays
-      // attached to the report and doesn't need to be re-uploaded on
-      // email send. If the `source-files` bucket doesn't exist yet
-      // (migration 005 not applied) we fall back to saving the report
-      // in legacy mode — the user will be asked to attach the file
-      // manually when emailing.
-      let storagePath: string | null = null;
+      // Upload the original source file to storage. The file is
+      // REQUIRED — without it the report can never be emailed because
+      // we no longer allow manual file attachment. If the upload fails
+      // (e.g. the `source-files` bucket from migration 005 doesn't
+      // exist), we block the save and tell the user what happened.
       const safeExt = (file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8) || 'bin';
-      const attemptedPath = `${selectedClientId}/${Date.now()}-${crypto.randomUUID()}.${safeExt}`;
+      const storagePath = `${selectedClientId}/${Date.now()}-${crypto.randomUUID()}.${safeExt}`;
       const { error: uploadErr } = await supabase
         .storage
         .from('source-files')
-        .upload(attemptedPath, file, {
+        .upload(storagePath, file, {
           contentType: file.type || 'application/octet-stream',
           upsert: false,
         });
       if (uploadErr) {
-        // Bucket not found → migration 005 not applied. Warn and continue
-        // in legacy mode so the user can still save the report.
-        if (/bucket|not.*found/i.test(uploadErr.message)) {
-          console.warn('source-files bucket missing (migration 005?); saving report without persisted file.');
-        } else {
-          alert('Error al subir el fichero original: ' + uploadErr.message);
-          setSaving(false);
-          return;
-        }
-      } else {
-        storagePath = attemptedPath;
+        const hint = /bucket|not.*found/i.test(uploadErr.message)
+          ? ' Asegúrate de que la migración 005 está aplicada en Supabase (crea el bucket "source-files").'
+          : '';
+        alert('Error al subir el fichero original: ' + uploadErr.message + hint);
+        setSaving(false);
+        return;
       }
 
-      // Build the insert payload. If migration 005 isn't applied the
-      // `source_file_path` and `source_file_name` columns don't exist,
-      // so we retry without them on that specific error.
-      type ReportInsertPayload = {
-        client_id: string;
-        title: string;
-        period: string;
-        report_type: 'charts' | 'table' | 'flowchart';
-        ai_analysis: AIAnalysis;
-        report_html: string;
-        report_data: ProcessedData;
-        created_by: string;
-        source_file_path?: string;
-        source_file_name?: string;
-      };
-      const payload: ReportInsertPayload = {
+      const { error: insertErr } = await supabase.from('reports').insert({
         client_id: selectedClientId,
         title,
         period,
@@ -316,33 +294,17 @@ function NewReportContent() {
         report_html: reportHtml,
         report_data: processedData,
         created_by: user.id,
-      };
-      if (storagePath) {
-        payload.source_file_path = storagePath;
-        payload.source_file_name = file.name;
-      }
-
-      let { error: insertErr } = await supabase.from('reports').insert(payload);
-
-      if (insertErr && /source_file_(path|name)/i.test(insertErr.message) && payload.source_file_path) {
-        // Migration 005 columns missing — retry in legacy mode without them
-        console.warn('reports.source_file_* columns missing; retrying in legacy mode.');
-        delete payload.source_file_path;
-        delete payload.source_file_name;
-        ({ error: insertErr } = await supabase.from('reports').insert(payload));
-        // Clean up the orphaned storage upload if we had done one
-        if (storagePath) {
-          await supabase.storage.from('source-files').remove([storagePath]).catch(() => {});
-        }
-      }
+        source_file_path: storagePath,
+        source_file_name: file.name,
+      });
 
       if (insertErr) {
-        // Roll back the uploaded file if the row insert failed for a
-        // non-schema reason
-        if (storagePath) {
-          await supabase.storage.from('source-files').remove([storagePath]).catch(() => {});
-        }
-        alert('Error al guardar: ' + insertErr.message);
+        // Roll back the uploaded file
+        await supabase.storage.from('source-files').remove([storagePath]).catch(() => {});
+        const hint = /source_file/i.test(insertErr.message)
+          ? ' Asegúrate de que la migración 005 está aplicada en Supabase (añade las columnas source_file_path y source_file_name a reports).'
+          : '';
+        alert('Error al guardar: ' + insertErr.message + hint);
       } else {
         logAction(supabase, 'report_created', '/reports/new');
         router.push(`/clients/${selectedClientId}`);
