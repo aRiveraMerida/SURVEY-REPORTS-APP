@@ -1,7 +1,7 @@
-import type { EmailSubjectConfig } from '@/types/database';
+import type { EmailConfig } from '@/types/database';
 
 /**
- * Variables available when rendering an email subject.
+ * Variables available when rendering email subject / body.
  */
 export interface SubjectVars {
   title: string;
@@ -9,122 +9,77 @@ export interface SubjectVars {
   clientName: string;
 }
 
-/**
- * Strip anything that would allow injecting additional email headers
- * and trim leading/trailing whitespace.
- */
+/** Sanitise a string for use in email headers (strips CRLF). */
 function sanitize(s: string): string {
   return s.replace(/[\r\n]/g, ' ').trim();
 }
 
-/** Maximum allowed subject length (mail clients and RFC 2822 are lenient). */
-const MAX_SUBJECT_LENGTH = 200;
-
-/**
- * Default configuration used when the client hasn't customised
- * anything yet. Mirrors the old hard-coded `${title} — ${period}`
- * behaviour.
- */
-export const DEFAULT_SUBJECT_CONFIG: EmailSubjectConfig = {
-  prefix: '',
-  includeTitle: true,
-  includePeriod: true,
-  includeClientName: false,
-  separator: ' — ',
-  suffix: '',
-};
-
-/** Valid separator presets the UI exposes. */
-export const SEPARATOR_OPTIONS: { value: string; label: string }[] = [
-  { value: ' — ', label: '— (raya larga)' },
-  { value: ' - ', label: '- (guión)' },
-  { value: ' | ', label: '| (barra vertical)' },
-  { value: ' · ', label: '· (punto medio)' },
-  { value: ': ', label: ': (dos puntos)' },
-  { value: ' ', label: 'Espacio' },
-];
-
-/**
- * Render the final subject from a structured config + variables.
- * Parts are joined in this order: prefix → title → period →
- * clientName → suffix, using the config's separator. Empty or
- * disabled parts are skipped so the separator never appears twice
- * in a row.
- */
-export function renderSubjectFromConfig(
-  config: EmailSubjectConfig | null | undefined,
-  vars: SubjectVars
-): string {
-  const c = config || DEFAULT_SUBJECT_CONFIG;
-  const sep = c.separator || ' — ';
-
-  const parts: string[] = [];
-  const prefix = sanitize(c.prefix || '');
-  if (prefix) parts.push(prefix);
-  if (c.includeTitle) {
-    const t = sanitize(vars.title);
-    if (t) parts.push(t);
-  }
-  if (c.includePeriod) {
-    const p = sanitize(vars.period);
-    if (p) parts.push(p);
-  }
-  if (c.includeClientName) {
-    const n = sanitize(vars.clientName);
-    if (n) parts.push(n);
-  }
-  const suffix = sanitize(c.suffix || '');
-  if (suffix) parts.push(suffix);
-
-  const joined = parts.join(sep).trim();
-  if (joined) return joined.substring(0, MAX_SUBJECT_LENGTH);
-
-  // Nothing selected → fall back to the default title — period
-  return renderSubjectFromConfig(DEFAULT_SUBJECT_CONFIG, vars);
-}
-
-/**
- * Legacy template renderer — kept so clients configured before
- * migration 006 (with free-text {placeholder} strings) still work.
- *
- * Supports: {title}, {period}, {clientName}
- */
-export function renderSubjectFromTemplate(
-  template: string,
-  vars: SubjectVars
-): string {
-  const rendered = template
+/** Replace all supported placeholders in a template string. */
+function replacePlaceholders(template: string, vars: SubjectVars): string {
+  return template
     .replace(/\{title\}/g, sanitize(vars.title))
     .replace(/\{period\}/g, sanitize(vars.period))
     .replace(/\{clientName\}/g, sanitize(vars.clientName));
-  return sanitize(rendered).substring(0, MAX_SUBJECT_LENGTH);
 }
 
+const MAX_SUBJECT_LENGTH = 200;
+
 /**
- * Top-level renderer used by the email send endpoint. Priority:
+ * Render the email subject from the client's config.
  *
- *   1. Structured `config` (from migration 006 onwards).
- *   2. Legacy free-text `template` string.
- *   3. Hard-coded fallback `"{title} — {period}"`.
+ * Priority:
+ *   1. `config.subject` (from migration 006 onwards)
+ *   2. `legacyTemplate` (free-text template from migration 005)
+ *   3. Hard-coded fallback: `"{title} — {period}"`
  *
- * Always returns a non-empty string; never throws.
+ * All three support {title}, {period}, {clientName} placeholders.
  */
 export function renderEmailSubject(
-  config: EmailSubjectConfig | null | undefined,
-  template: string | null | undefined,
+  config: EmailConfig | null | undefined,
+  legacyTemplate: string | null | undefined,
   vars: SubjectVars
 ): string {
   const fallback = `${sanitize(vars.title) || 'Informe'} — ${sanitize(vars.period)}`;
 
-  if (config) {
-    const out = renderSubjectFromConfig(config, vars);
-    return out || fallback;
+  if (config?.subject?.trim()) {
+    const out = sanitize(replacePlaceholders(config.subject, vars));
+    return out.substring(0, MAX_SUBJECT_LENGTH) || fallback;
   }
 
-  if (template && template.trim()) {
-    const out = renderSubjectFromTemplate(template, vars);
-    return out || fallback;
+  if (legacyTemplate?.trim()) {
+    const out = sanitize(replacePlaceholders(legacyTemplate, vars));
+    return out.substring(0, MAX_SUBJECT_LENGTH) || fallback;
   }
 
   return fallback;
+}
+
+/**
+ * Default HTML email body used when the client hasn't customised one.
+ * Supports the same {title}, {period}, {clientName} placeholders.
+ */
+const DEFAULT_BODY_HTML = `
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+  <h2 style="color:#53860F;margin-bottom:8px;">{title}</h2>
+  <p style="color:#666;margin-bottom:20px;">Periodo: <strong>{period}</strong></p>
+  <p style="color:#333;line-height:1.6;">
+    Adjunto encontrará el informe generado en formato PDF y el archivo de datos original.
+  </p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+  <p style="color:#aaa;font-size:12px;">Este email ha sido enviado automáticamente.</p>
+</div>
+`.trim();
+
+/**
+ * Render the email body HTML from the client's config.
+ *
+ * If `config.bodyHtml` is set, use it (with placeholder replacement).
+ * Otherwise fall back to the built-in default body.
+ */
+export function renderEmailBody(
+  config: EmailConfig | null | undefined,
+  vars: SubjectVars
+): string {
+  const template = config?.bodyHtml?.trim() || DEFAULT_BODY_HTML;
+  return replacePlaceholders(template, vars);
 }

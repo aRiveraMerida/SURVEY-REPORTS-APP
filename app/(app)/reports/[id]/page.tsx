@@ -22,9 +22,6 @@ export default function ReportViewPage() {
   const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [manualEmails, setManualEmails] = useState<string[]>([]);
   const [newManualEmail, setNewManualEmail] = useState('');
-  // Legacy fallback: reports created before source-file persistence need
-  // the user to upload the original file manually.
-  const [legacyFile, setLegacyFile] = useState<File | null>(null);
 
   const supabase = createClient();
 
@@ -102,17 +99,6 @@ export default function ReportViewPage() {
     }
   };
 
-  const handleDownload = () => {
-    const blob = new Blob([report.report_html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${report.title} - ${report.period}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
-    logAction(supabase, 'report_exported_html', `/reports/${id}`);
-  };
-
   const handleExportExcel = () => {
     if (!report.report_data) return;
     exportToExcel(report.report_data, report.title, report.period);
@@ -130,13 +116,13 @@ export default function ReportViewPage() {
   const handleSendEmail = async () => {
     if (!report) return;
 
-    if (allRecipients.length === 0) {
-      setSendResult({ type: 'error', text: 'Añade al menos un destinatario. Puedes escribirlo abajo o configurar emails en el cliente desde el dashboard.' });
+    if (!hasStoredFile) {
+      setSendResult({ type: 'error', text: 'Este informe no tiene fichero original asociado. Regenera el informe desde el asistente para que el fichero se almacene automáticamente.' });
       return;
     }
 
-    if (!hasStoredFile && !legacyFile) {
-      setSendResult({ type: 'error', text: 'Este informe no tiene fichero original asociado. Adjunta el Excel/CSV de origen para continuar.' });
+    if (allRecipients.length === 0) {
+      setSendResult({ type: 'error', text: 'Añade al menos un destinatario.' });
       return;
     }
 
@@ -148,45 +134,18 @@ export default function ReportViewPage() {
     setSendResult(null);
 
     try {
-      type SendBody = {
-        action: 'send-report';
-        clientId: string;
-        reportId?: string;
-        reportHtml: string;
-        originalFileBase64?: string;
-        originalFileName?: string;
-        title: string;
-        period: string;
-        overrideEmails: string[];
-      };
-
-      const payload: SendBody = {
-        action: 'send-report',
-        clientId: report.client_id,
-        reportHtml: report.report_html,
-        title: report.title,
-        period: report.period,
-        overrideEmails: allRecipients,
-      };
-
-      if (hasStoredFile) {
-        // Server loads the file from storage — guaranteed to be the exact
-        // one used to generate the report.
-        payload.reportId = report.id;
-      } else if (legacyFile) {
-        // Legacy reports: upload the file inline.
-        const arrayBuffer = await legacyFile.arrayBuffer();
-        const base64 = btoa(
-          new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-        );
-        payload.originalFileBase64 = base64;
-        payload.originalFileName = legacyFile.name;
-      }
-
       const res = await fetch('/api/send-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          action: 'send-report',
+          clientId: report.client_id,
+          reportId: report.id,
+          reportHtml: report.report_html,
+          title: report.title,
+          period: report.period,
+          overrideEmails: allRecipients,
+        }),
       });
 
       const result = await res.json();
@@ -229,12 +188,6 @@ export default function ReportViewPage() {
           className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
         >
           Exportar Excel
-        </button>
-        <button
-          onClick={handleDownload}
-          className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
-        >
-          Descargar HTML
         </button>
         <button
           onClick={() => setShowSendPanel(!showSendPanel)}
@@ -316,26 +269,8 @@ export default function ReportViewPage() {
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-3">
-              <label className="flex-1">
-                <span className="block text-xs font-medium text-amber-700 mb-1">
-                  Este informe no tiene fichero original asociado (generado antes de la mejora).
-                  Adjunta el Excel/CSV de origen:
-                </span>
-                <input
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={(e) => { setLegacyFile(e.target.files?.[0] || null); setSendResult(null); }}
-                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border file:border-gray-300 file:text-sm file:font-medium file:bg-white hover:file:bg-gray-50"
-                />
-              </label>
-              <button
-                onClick={handleSendEmail}
-                disabled={sending || !legacyFile || allRecipients.length === 0}
-                className="px-5 py-2.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 self-end"
-              >
-                {sending ? 'Enviando...' : `Enviar a ${allRecipients.length}`}
-              </button>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+              Este informe no tiene fichero original asociado (generado antes de la mejora). Para poder enviarlo por email, regenera el informe desde el asistente.
             </div>
           )}
           {sendResult && (

@@ -388,15 +388,6 @@ function NewReportContent() {
     }
   };
 
-  const handleDownload = () => {
-    const blob = new Blob([reportHtml], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `${title} - ${period}.html`; a.click();
-    URL.revokeObjectURL(url);
-    logAction(supabase, 'report_exported_html', '/reports/new');
-  };
-
   const handleExportExcel = () => {
     if (!processedData) return;
     exportToExcel(processedData, title, period);
@@ -672,10 +663,6 @@ function NewReportContent() {
             <button onClick={handleExportExcel}
               className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50">
               Excel
-            </button>
-            <button onClick={handleDownload}
-              className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50">
-              HTML
             </button>
             <button onClick={handleSave} disabled={saving}
               className="px-6 py-2 text-sm font-medium bg-corp text-white rounded-lg hover:bg-corp-dark disabled:opacity-50"

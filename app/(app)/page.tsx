@@ -6,12 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { deleteClientWithAssets, extractStoragePath } from '@/lib/db/clients';
 import { logAction } from '@/lib/db/access-logs';
 import { formatDate } from '@/lib/utils/formatting';
-import {
-  DEFAULT_SUBJECT_CONFIG,
-  SEPARATOR_OPTIONS,
-  renderSubjectFromConfig,
-} from '@/lib/email/subject';
-import type { Client, EmailSubjectConfig } from '@/types/database';
+import type { Client, EmailConfig } from '@/types/database';
 
 interface ClientWithStats extends Client {
   report_count: number;
@@ -30,9 +25,9 @@ export default function HomePage() {
   const [contactEmails, setContactEmails] = useState<string[]>([]);
   const [newContactEmail, setNewContactEmail] = useState('');
   const [filePassword, setFilePassword] = useState('');
-  // Structured email subject config (replaces the old free-text
-  // template input). Controlled by a form in the modal.
-  const [subjectConfig, setSubjectConfig] = useState<EmailSubjectConfig>(DEFAULT_SUBJECT_CONFIG);
+  // Simple email config: subject line + optional HTML body.
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBodyHtml, setEmailBodyHtml] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
@@ -82,17 +77,17 @@ export default function HomePage() {
   const openCreate = () => {
     setEditingClient(null); setName(''); setNotes(''); setLogoFile(null); setLogoPreview(null);
     setContactEmails([]); setNewContactEmail(''); setFilePassword('');
-    setSubjectConfig(DEFAULT_SUBJECT_CONFIG);
+    setEmailSubject(''); setEmailBodyHtml('');
     setSaveError(null); setShowModal(true);
   };
   const openEdit = (c: Client) => {
     setEditingClient(c); setName(c.name); setNotes(c.notes || ''); setLogoFile(null); setLogoPreview(c.logo_url);
     setContactEmails(c.contact_emails || []); setNewContactEmail(''); setFilePassword(c.file_password || '');
-    // Prefer the new structured config. Fall back to the legacy free-text
-    // template: users who typed a template by hand before migration 006
-    // still see sensible defaults — the template keeps working on the
-    // backend until they save the modal, at which point it's replaced.
-    setSubjectConfig(c.email_subject_config || DEFAULT_SUBJECT_CONFIG);
+    // Load email config from the structured JSONB column, or fall back to
+    // the legacy text template for the subject.
+    const cfg = c.email_subject_config as EmailConfig | null;
+    setEmailSubject(cfg?.subject || c.email_subject_template || '');
+    setEmailBodyHtml(cfg?.bodyHtml || '');
     setSaveError(null); setShowModal(true);
   };
 
@@ -140,7 +135,7 @@ export default function HomePage() {
       logo_url: string | null;
       contact_emails: string[];
       file_password: string | null;
-      email_subject_config?: EmailSubjectConfig | null;
+      email_subject_config?: EmailConfig | null;
       // email_subject_template is legacy — we no longer WRITE it from
       // the UI (the new form replaces it). We clear it on save so
       // there's a single source of truth.
@@ -152,7 +147,10 @@ export default function HomePage() {
       logo_url: logoUrl,
       contact_emails: contactEmails,
       file_password: filePassword.trim() || null,
-      email_subject_config: subjectConfig,
+      email_subject_config: {
+        subject: emailSubject.trim() || undefined,
+        bodyHtml: emailBodyHtml.trim() || undefined,
+      } as EmailConfig,
       email_subject_template: null,
     };
 
@@ -401,110 +399,40 @@ export default function HomePage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono" />
                 </div>
 
-                {/* Email subject builder — declarative form */}
+                {/* Email customisation — simple subject + HTML body */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Asunto del email</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Personalización del email</label>
                   <p className="text-xs text-gray-400 mb-3">
-                    Elige qué partes incluir en el asunto cuando se envíe un informe a este cliente.
+                    Personaliza el asunto y el cuerpo del email que se envía con los informes de este cliente.
+                    Usa <code className="text-gray-600">{'{title}'}</code>, <code className="text-gray-600">{'{period}'}</code> y <code className="text-gray-600">{'{clientName}'}</code> como variables.
+                    Déjalos vacíos para usar el formato por defecto.
                   </p>
 
-                  <div className="border border-gray-200 rounded-lg p-4 space-y-3 bg-gray-50">
-                    {/* Prefix */}
+                  <div className="space-y-3">
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Texto al principio (opcional)</label>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Asunto</label>
                       <input
                         type="text"
-                        value={subjectConfig.prefix}
-                        onChange={(e) => setSubjectConfig({ ...subjectConfig, prefix: e.target.value })}
-                        placeholder="Ej: Informe"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                        value={emailSubject}
+                        onChange={(e) => setEmailSubject(e.target.value)}
+                        placeholder="Informe {title} — {period}"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                       />
                     </div>
-
-                    {/* Included parts */}
                     <div>
-                      <span className="block text-xs font-medium text-gray-600 mb-1.5">Incluir en el asunto</span>
-                      <div className="space-y-1.5">
-                        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={subjectConfig.includeTitle}
-                            onChange={(e) => setSubjectConfig({ ...subjectConfig, includeTitle: e.target.checked })}
-                            className="w-4 h-4 rounded border-gray-300 text-corp focus:ring-corp"
-                          />
-                          Título del informe
-                        </label>
-                        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={subjectConfig.includePeriod}
-                            onChange={(e) => setSubjectConfig({ ...subjectConfig, includePeriod: e.target.checked })}
-                            className="w-4 h-4 rounded border-gray-300 text-corp focus:ring-corp"
-                          />
-                          Periodo
-                        </label>
-                        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={subjectConfig.includeClientName}
-                            onChange={(e) => setSubjectConfig({ ...subjectConfig, includeClientName: e.target.checked })}
-                            className="w-4 h-4 rounded border-gray-300 text-corp focus:ring-corp"
-                          />
-                          Nombre del cliente
-                        </label>
-                      </div>
-                    </div>
-
-                    {/* Separator */}
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Separador entre partes</label>
-                      <select
-                        value={subjectConfig.separator}
-                        onChange={(e) => setSubjectConfig({ ...subjectConfig, separator: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-                      >
-                        {SEPARATOR_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Suffix */}
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Texto al final (opcional)</label>
-                      <input
-                        type="text"
-                        value={subjectConfig.suffix}
-                        onChange={(e) => setSubjectConfig({ ...subjectConfig, suffix: e.target.value })}
-                        placeholder="Ej: (confidencial)"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Cuerpo del email (HTML)</label>
+                      <textarea
+                        value={emailBodyHtml}
+                        onChange={(e) => setEmailBodyHtml(e.target.value)}
+                        rows={6}
+                        placeholder={'<p>Adjunto encontrará el informe <strong>{title}</strong> del periodo {period}.</p>\n<p>Saludos cordiales.</p>'}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono resize-y"
                       />
-                    </div>
-
-                    {/* Live preview */}
-                    <div className="pt-2 border-t border-gray-200">
-                      <span className="block text-xs font-medium text-gray-600 mb-1">Vista previa</span>
-                      <div className="px-3 py-2 bg-white border border-gray-200 rounded text-sm text-gray-800 font-medium break-words">
-                        {renderSubjectFromConfig(subjectConfig, {
-                          title: name.trim() || 'Nombre del informe',
-                          period: 'MARZO 2026',
-                          clientName: name.trim() || 'Nombre del cliente',
-                        })}
-                      </div>
                       <p className="text-[11px] text-gray-400 mt-1">
-                        Ejemplo usando periodo <em>MARZO 2026</em>. El título y el cliente se toman del informe enviado.
+                        Escribe HTML o texto plano. Si lo dejas vacío se usará el cuerpo por defecto.
                       </p>
                     </div>
                   </div>
-
-                  {/* Legacy template notice */}
-                  {editingClient?.email_subject_template && !editingClient?.email_subject_config && (
-                    <p className="text-[11px] text-amber-600 mt-2">
-                      Este cliente tenía una plantilla antigua con variables:{' '}
-                      <code className="text-amber-700">{editingClient.email_subject_template}</code>.
-                      Se reemplazará por el formulario de arriba al guardar.
-                    </p>
-                  )}
                 </div>
               </div>
             </div>

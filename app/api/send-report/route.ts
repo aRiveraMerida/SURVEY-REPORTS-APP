@@ -3,8 +3,8 @@ import { createClient } from '@/lib/supabase/server';
 import nodemailer from 'nodemailer';
 import { generatePdf } from '@/lib/reports/pdf-generator';
 import { encryptFileWithZip } from '@/lib/reports/zip-encrypt';
-import { renderEmailSubject } from '@/lib/email/subject';
-import type { EmailSubjectConfig } from '@/types/database';
+import { renderEmailSubject, renderEmailBody } from '@/lib/email/subject';
+import type { EmailConfig } from '@/types/database';
 
 // PDF generation + email send needs the serverless timeout raised
 // above the default 10s. 60s is the Hobby maximum.
@@ -221,9 +221,9 @@ export async function POST(request: NextRequest) {
       const clientContactEmails: string[] = Array.isArray(client.contact_emails) ? client.contact_emails : [];
       const clientFilePassword: string | null = typeof client.file_password === 'string' ? client.file_password : null;
       const clientSubjectTemplate: string | null = typeof client.email_subject_template === 'string' ? client.email_subject_template : null;
-      const clientSubjectConfig: EmailSubjectConfig | null =
+      const clientEmailConfig: EmailConfig | null =
         client.email_subject_config && typeof client.email_subject_config === 'object'
-          ? (client.email_subject_config as EmailSubjectConfig)
+          ? (client.email_subject_config as EmailConfig)
           : null;
 
       // Use override emails if provided, otherwise fall back to client emails
@@ -299,11 +299,9 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      const subject = renderEmailSubject(clientSubjectConfig, clientSubjectTemplate, {
-        title: safeTitle,
-        period: safePeriod,
-        clientName,
-      });
+      const emailVars = { title: safeTitle, period: safePeriod, clientName };
+      const subject = renderEmailSubject(clientEmailConfig, clientSubjectTemplate, emailVars);
+      const bodyHtml = renderEmailBody(clientEmailConfig, emailVars);
 
       // Send email
       try {
@@ -312,18 +310,7 @@ export async function POST(request: NextRequest) {
           from: smtp.from,
           to: validEmails.join(', '),
           subject,
-          html: `
-            <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
-              <h2 style="color:#53860F;margin-bottom:8px;">${safeTitle}</h2>
-              <p style="color:#666;margin-bottom:20px;">Periodo: <strong>${safePeriod}</strong></p>
-              <p style="color:#333;line-height:1.6;">
-                Adjunto encontrará el informe generado en formato PDF${trimmedPassword ? ' y el archivo de datos original en un ZIP protegido con contraseña' : ' y el archivo de datos original'}.
-              </p>
-              ${trimmedPassword ? '<p style="color:#888;font-size:13px;margin-top:16px;">El archivo ZIP está protegido con la contraseña que le fue comunicada previamente.</p>' : ''}
-              <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-              <p style="color:#aaa;font-size:12px;">Este email ha sido enviado automáticamente.</p>
-            </div>
-          `,
+          html: bodyHtml,
           attachments,
         });
 
