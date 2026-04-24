@@ -1,8 +1,9 @@
 /**
- * Create a password-protected ZIP of a single file buffer using AES-256.
- * Uses archiver + archiver-zip-encrypted — pure Node, works in Vercel
- * serverless. Much stronger than the legacy PKZip "zip -P" cipher
- * (which is also unavailable on Vercel: the `zip` binary isn't installed).
+ * Create a password-protected ZIP of a single file buffer using the legacy
+ * PKZip 2.0 (ZipCrypto) cipher. Uses archiver + archiver-zip-encrypted —
+ * pure Node, works in Vercel serverless. Cipher is weaker than AES-256 but
+ * is the only one supported by the Windows Explorer built-in unzip, which
+ * is what most non-technical recipients use.
  */
 import archiver from 'archiver';
 // archiver-zip-encrypted doesn't ship types; the runtime shape is a plugin
@@ -34,7 +35,7 @@ export async function encryptFileWithZip(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const archive = (archiver as any).create('zip-encrypted', {
       zlib: { level: 8 },
-      encryptionMethod: 'aes256',
+      encryptionMethod: 'zip20',
       password,
     });
 
